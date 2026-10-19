@@ -1,0 +1,53 @@
+#!/bin/sh
+# Turns SSH_AUTHORIZED_KEYS into authorized_keys lines on stdout.
+#
+# Accepts one key per line, and also several keys pasted on one line
+# (Railway's single-line variable editor), or literal "\n" separators.
+# Every key is checked with ssh-keygen; invalid entries are skipped with a
+# warning on stderr, valid ones are logged with their fingerprint.
+set -eu
+
+input="${SSH_AUTHORIZED_KEYS:-}"
+[ -n "${input}" ] || exit 0
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "${tmp_dir}"' EXIT
+
+# 1. Normalise: drop CR, turn literal \n into spaces, split lines that hold
+#    several keys at each key-type token. Lines with quoted options are kept
+#    as they are.
+printf '%s\n' "${input}" | tr -d '\r' | awk '
+  BEGIN { type_re = "^(ssh-(ed25519|rsa|dss)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\\.com)$" }
+  /^[[:space:]]*(#|$)/ { next }
+  index($0, "\"") > 0 { print; next }
+  {
+    gsub(/\\n/, " ")
+    n = split($0, tok, /[[:space:]]+/)
+    out = ""; seen = 0
+    for (i = 1; i <= n; i++) {
+      if (tok[i] == "") continue
+      if (tok[i] ~ type_re) {
+        # A new key starts. Flush the previous key, or leading junk: unquoted
+        # options are a single token, so text with spaces is not an option list.
+        if (seen || index(out, " ") > 0) { print out; out = "" }
+        seen = 1
+      }
+      out = (out == "" ? tok[i] : out " " tok[i])
+    }
+    if (out != "") print out
+  }
+' > "${tmp_dir}/candidates"
+
+# 2. Validate each candidate.
+count=0
+while IFS= read -r line; do
+  [ -n "${line}" ] || continue
+  count=$((count + 1))
+  printf '%s\n' "${line}" > "${tmp_dir}/key"
+  if fingerprint="$(ssh-keygen -l -f "${tmp_dir}/key" 2>/dev/null)"; then
+    printf '%s\n' "${line}"
+    printf '[devbox] authorized key %s: %s\n' "${count}" "${fingerprint}" >&2
+  else
+    printf '[devbox] WARNING: SSH_AUTHORIZED_KEYS entry %s is not a valid public key; skipped\n' "${count}" >&2
+  fi
+done < "${tmp_dir}/candidates"

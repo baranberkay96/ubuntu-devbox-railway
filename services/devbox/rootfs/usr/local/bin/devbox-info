@@ -1,0 +1,45 @@
+#!/bin/sh
+# Prints how to reach this dev box (SSH command, host key fingerprints) and
+# the versions of the preinstalled tools. Contains no secrets.
+set -u
+
+info_file="/run/devbox/info.env"
+fingerprints_file="/run/devbox/ssh_host_fingerprints.txt"
+versions_file="/etc/devbox/versions.txt"
+
+DEVBOX_SSH_HOST=""
+DEVBOX_SSH_PORT=""
+DEVBOX_PUBLIC_DOMAIN=""
+DEVBOX_PASSWORD_AUTH="unknown"
+DEVBOX_WEB_TERMINAL="unknown"
+# The file is written by the root-owned entrypoint at every start.
+# shellcheck disable=SC1090
+[ -r "${info_file}" ] && . "${info_file}"
+
+user="$(id -un)"
+echo "Ubuntu Dev Box"
+echo
+if [ -n "${DEVBOX_SSH_HOST}" ] && [ -n "${DEVBOX_SSH_PORT}" ]; then
+  echo "SSH:            ssh -p ${DEVBOX_SSH_PORT} ${user}@${DEVBOX_SSH_HOST}"
+else
+  echo "SSH:            no TCP proxy found (Settings > Networking > TCP Proxy, port 22)"
+fi
+echo "Password login: ${DEVBOX_PASSWORD_AUTH}"
+if [ -n "${DEVBOX_PUBLIC_DOMAIN}" ]; then
+  echo "Status page:    https://${DEVBOX_PUBLIC_DOMAIN}/ (user dev, password WEB_PASSWORD)"
+  if [ "${DEVBOX_WEB_TERMINAL}" = "true" ]; then
+    echo "Web terminal:   https://${DEVBOX_PUBLIC_DOMAIN}/terminal/"
+  fi
+fi
+echo
+echo "Host key fingerprints:"
+if [ -r "${fingerprints_file}" ]; then
+  sed 's/^/  /' "${fingerprints_file}"
+else
+  echo "  (not available)"
+fi
+echo
+echo "Installed tools:"
+if [ -r "${versions_file}" ]; then
+  awk -F'|' '{ printf "  %-18s %s\n", $1, $2 }' "${versions_file}"
+fi

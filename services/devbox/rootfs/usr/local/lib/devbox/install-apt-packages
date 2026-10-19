@@ -1,0 +1,33 @@
+#!/bin/sh
+# Usage: install-apt-packages PACKAGE...
+#
+# Reinstalls extra Ubuntu packages at boot (from APT_PACKAGES and
+# ~/.config/devbox/apt-packages). The container filesystem resets on every
+# redeploy; only /home is persistent, so this is how system packages "stick".
+# Runs as root in the background; the box is usable while it works.
+set -eu
+
+[ "$(id -u)" -eq 0 ] || { echo "install-apt-packages: must run as root" >&2; exit 1; }
+
+valid=""
+for pkg in "$@"; do
+  case "${pkg}" in
+    '') continue ;;
+    -*|*[!A-Za-z0-9.+:=~_-]*)
+      echo "install-apt-packages: skipping invalid package name '${pkg}'" >&2
+      continue
+      ;;
+  esac
+  valid="${valid} ${pkg}"
+done
+
+[ -n "${valid}" ] || { echo "install-apt-packages: nothing to install"; exit 0; }
+
+export DEBIAN_FRONTEND=noninteractive
+echo "install-apt-packages: installing${valid}"
+apt-get update
+# Word splitting is intended: each name was validated above.
+# shellcheck disable=SC2086
+apt-get install -y --no-install-recommends ${valid}
+rm -rf /var/lib/apt/lists/*
+echo "install-apt-packages: done"

@@ -1,0 +1,137 @@
+{
+  "name": "Ubuntu 24.04 Cloud Dev Box (SSH + Claude Code)",
+  "description": "Always-on Ubuntu box with SSH, tmux and AI coding CLIs on persistent disk.",
+  "category": "Other",
+  "tags": [
+    "ubuntu",
+    "ssh",
+    "devbox",
+    "tmux",
+    "claude-code",
+    "codex",
+    "gemini-cli",
+    "opencode",
+    "web-terminal",
+    "ai-coding"
+  ],
+  "image": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/ubuntu-linux.svg",
+  "upstream": {
+    "base": "ubuntu:noble-20260930.1",
+    "checked": "2026-10-20"
+  },
+  "services": {
+    "Dev Box": {
+      "icon": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/ubuntu-linux.svg",
+      "source": {
+        "repo": "baranberkay96/ubuntu-devbox-railway",
+        "rootDirectory": "/services/devbox"
+      },
+      "startCommand": null,
+      "preDeployCommand": null,
+      "healthcheckPath": "/healthz",
+      "healthcheckTimeout": 300,
+      "restartPolicyType": "ALWAYS",
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": true,
+      "targetPort": 8080,
+      "tcpProxy": 22,
+      "volume": {
+        "mountPath": "/home"
+      },
+      "variables": {
+        "SSH_PASSWORD": {
+          "defaultValue": "${{secret(24, \"abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789\")}}",
+          "description": "Password for SSH as user 'dev', generated at deploy. Clear it for key-only SSH (then set SSH_AUTHORIZED_KEYS). Minimum 12 characters.",
+          "required": false
+        },
+        "SSH_AUTHORIZED_KEYS": {
+          "defaultValue": "",
+          "description": "Recommended. Your SSH public key(s) for user 'dev', one per line (several on one line also work). Keys added to ~/.ssh/authorized_keys persist too.",
+          "required": false
+        },
+        "WEB_PASSWORD": {
+          "defaultValue": "${{secret(24, \"abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789\")}}",
+          "description": "Password (user 'dev') for the status page and web terminal on the public URL. Generated at deploy; only /healthz is public. Minimum 12 characters.",
+          "required": false
+        },
+        "WEB_TERMINAL": {
+          "defaultValue": "true",
+          "description": "Browser terminal (ttyd) at /terminal/ behind WEB_PASSWORD. Set to false to keep only the status page.",
+          "required": false
+        },
+        "PORT": {
+          "defaultValue": "8080",
+          "description": "HTTP port for the healthcheck, status page and web terminal; the public domain targets it.",
+          "required": false
+        },
+        "TZ": {
+          "defaultValue": "UTC",
+          "description": "Time zone for shells and tools, e.g. Europe/Istanbul.",
+          "required": false
+        },
+        "ANTHROPIC_API_KEY": {
+          "defaultValue": "",
+          "description": "Optional. Claude Code uses this Anthropic API key instead of a Claude subscription login.",
+          "required": false
+        },
+        "CLAUDE_CODE_OAUTH_TOKEN": {
+          "defaultValue": "",
+          "description": "Optional. Long-lived Claude subscription token from `claude setup-token`, for headless use without the login prompt.",
+          "required": false
+        },
+        "OPENAI_API_KEY": {
+          "defaultValue": "",
+          "description": "Optional. OpenAI API key for Codex CLI (alternative to `codex login --device-auth` with ChatGPT).",
+          "required": false
+        },
+        "GEMINI_API_KEY": {
+          "defaultValue": "",
+          "description": "Optional. Gemini API key (Google AI Studio) for Gemini CLI; the simplest login on a remote box.",
+          "required": false
+        },
+        "OPENROUTER_API_KEY": {
+          "defaultValue": "",
+          "description": "Optional. Lets OpenCode use OpenRouter models. Other providers: run `opencode auth login`.",
+          "required": false
+        },
+        "GITHUB_TOKEN": {
+          "defaultValue": "",
+          "description": "Optional GitHub token for gh and HTTPS git (set up as git credential helper at start).",
+          "required": false
+        },
+        "GIT_USER_NAME": {
+          "defaultValue": "",
+          "description": "Optional git user.name for commits.",
+          "required": false
+        },
+        "GIT_USER_EMAIL": {
+          "defaultValue": "",
+          "description": "Optional git user.email for commits.",
+          "required": false
+        },
+        "GIT_REPO": {
+          "defaultValue": "",
+          "description": "Optional repository URL cloned once into ~/workspace on first start (private repos need GITHUB_TOKEN).",
+          "required": false
+        },
+        "APT_PACKAGES": {
+          "defaultValue": "",
+          "description": "Optional space-separated Ubuntu packages reinstalled in the background at every start (apt installs do not survive redeploys).",
+          "required": false
+        },
+        "DEVBOX_ENV_PASSTHROUGH": {
+          "defaultValue": "",
+          "description": "Optional comma-separated names of extra variables to expose in SSH and web terminal shells.",
+          "required": false
+        },
+        "RAILWAY_DEPLOYMENT_DRAINING_SECONDS": {
+          "defaultValue": "10",
+          "description": "Grace period for sshd, the web terminal and Caddy to stop cleanly on redeploy.",
+          "required": false
+        }
+      }
+    }
+  },
+  "buckets": []
+}

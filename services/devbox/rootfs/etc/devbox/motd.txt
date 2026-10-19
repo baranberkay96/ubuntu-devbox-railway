@@ -1,0 +1,13 @@
+
+  Ubuntu 24.04 Cloud Dev Box
+  --------------------------
+  claude     Claude Code       login: run `claude`, or ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN
+  codex      OpenAI Codex CLI  login: `codex login --device-auth`, or OPENAI_API_KEY
+  gemini     Gemini CLI        login: GEMINI_API_KEY, or `NO_BROWSER=true gemini`
+  opencode   OpenCode          login: `opencode auth login`
+  also: git, gh, node, npm, python3, uv, pipx, tmux, rg, fd, jq, build-essential
+
+  Persistent: /home/dev (projects in ~/workspace). The rest resets on redeploy.
+  Keep agents running after you disconnect:  tmux new -A -s main
+  Connection details and host key fingerprints:  devbox-info
+

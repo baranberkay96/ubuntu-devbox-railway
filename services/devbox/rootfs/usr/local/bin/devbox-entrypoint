@@ -1,0 +1,388 @@
+#!/usr/bin/env bash
+# Ubuntu Dev Box entrypoint.
+#
+# Runs as root under tini (Railway's own init is PID 1, so nothing here relies
+# on being PID 1):
+#   1. validates inputs and prepares the persistent home on the /home volume,
+#   2. exposes selected API keys and git settings to login shells,
+#   3. generates SSH host keys once (kept on the volume), configures auth and
+#      starts sshd under a restart loop,
+#   4. optionally starts the ttyd web terminal (loopback only) under a restart loop,
+#   5. renders the status page and execs Caddy on $PORT: public /healthz,
+#      everything else behind HTTP basic auth.
+set -Eeuo pipefail
+
+readonly DEV_USER="dev"
+readonly DEV_HOME="/home/${DEV_USER}"
+readonly STATE_DIR="/home/.devbox"            # root-only state on the volume
+readonly HOSTKEY_DIR="${STATE_DIR}/ssh"
+readonly INIT_MARKER="${DEV_HOME}/.devbox-initialized"
+readonly RUN_DIR="/run/devbox"
+readonly LIB_DIR="/usr/local/lib/devbox"
+readonly ENV_FILE="/etc/devbox/env.sh"
+readonly AUTHORIZED_KEYS_FILE="/etc/ssh/authorized_keys.d/${DEV_USER}"
+readonly TTYD_PORT="7681"
+readonly MIN_SECRET_LENGTH=12
+readonly SECRET_VARS=(SSH_PASSWORD WEB_PASSWORD)
+
+SSH_PORT="${SSH_PORT:-22}"
+HTTP_PORT="${PORT:-8080}"
+WORKSPACE_DIR="${DEV_HOME}/workspace"
+PASSWORD_AUTH="no"
+WEB_TERMINAL_ENABLED="false"
+
+# Variables copied into login shells (SSH and web terminal). Extend with
+# DEVBOX_ENV_PASSTHROUGH. Passwords are never copied.
+SHARED_VARS=(
+  ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL CLAUDE_CODE_OAUTH_TOKEN
+  OPENAI_API_KEY OPENAI_BASE_URL
+  GEMINI_API_KEY GOOGLE_API_KEY GOOGLE_CLOUD_PROJECT GOOGLE_CLOUD_LOCATION GOOGLE_GENAI_USE_VERTEXAI
+  OPENROUTER_API_KEY
+  GITHUB_TOKEN GH_TOKEN
+  TZ
+  RAILWAY_PUBLIC_DOMAIN RAILWAY_PRIVATE_DOMAIN RAILWAY_TCP_PROXY_DOMAIN RAILWAY_TCP_PROXY_PORT
+  RAILWAY_PROJECT_NAME RAILWAY_ENVIRONMENT_NAME RAILWAY_SERVICE_NAME
+)
+
+log()  { printf '[devbox] %s\n' "$*"; }
+warn() { printf '[devbox] WARNING: %s\n' "$*" >&2; }
+die()  { printf '[devbox] ERROR: %s\n' "$*" >&2; exit 1; }
+
+is_true() {
+  case "${1:-}" in
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+as_dev() {
+  setpriv --reuid="${DEV_USER}" --regid="${DEV_USER}" --init-groups \
+    env HOME="${DEV_HOME}" USER="${DEV_USER}" LOGNAME="${DEV_USER}" "$@"
+}
+
+# Starts a long-running command under the restart loop (see lib/supervise).
+supervise() {
+  local name="$1"
+  shift
+  "${LIB_DIR}/supervise" "${name}" "$@" &
+}
+
+validate_port() {
+  local name="$1" value="$2"
+  case "${value}" in
+    ''|*[!0-9]*) die "${name} must be a number (got '${value}')" ;;
+  esac
+  if [ "${value}" -lt 1 ] || [ "${value}" -gt 65535 ]; then
+    die "${name} must be between 1 and 65535 (got ${value})"
+  fi
+}
+
+validate_secret() {
+  local name="$1" value="$2"
+  if [ "${#value}" -lt "${MIN_SECRET_LENGTH}" ]; then
+    die "${name} must be at least ${MIN_SECRET_LENGTH} characters"
+  fi
+  case "${value}" in
+    *$'\n'*|*$'\r'*) die "${name} must not contain line breaks" ;;
+  esac
+}
+
+validate_inputs() {
+  [ "$(id -u)" -eq 0 ] || die "the entrypoint must start as root; it drops privileges itself"
+  validate_port PORT "${HTTP_PORT}"
+  validate_port SSH_PORT "${SSH_PORT}"
+  if [ "${HTTP_PORT}" = "${SSH_PORT}" ] || [ "${HTTP_PORT}" = "${TTYD_PORT}" ] || [ "${SSH_PORT}" = "${TTYD_PORT}" ]; then
+    die "PORT (${HTTP_PORT}), SSH_PORT (${SSH_PORT}) and the internal web terminal port (${TTYD_PORT}) must differ"
+  fi
+  if [ -n "${SSH_PASSWORD:-}" ]; then
+    validate_secret SSH_PASSWORD "${SSH_PASSWORD}"
+  fi
+  if [ -z "${WEB_PASSWORD:-}" ]; then
+    die "WEB_PASSWORD is empty. It protects the status page and the web terminal; set a value with at least ${MIN_SECRET_LENGTH} characters"
+  fi
+  validate_secret WEB_PASSWORD "${WEB_PASSWORD}"
+  if is_true "${WEB_TERMINAL:-true}"; then
+    WEB_TERMINAL_ENABLED="true"
+  fi
+  # Keep the login secrets as shell variables only: no child process (sshd,
+  # ttyd, git, agents started from shells) inherits them from here on.
+  export -n SSH_PASSWORD WEB_PASSWORD 2>/dev/null || true
+}
+
+check_runtime() {
+  if grep -qE '^NoNewPrivs:[[:space:]]+1' /proc/self/status 2>/dev/null; then
+    warn "the runtime sets no_new_privs: sudo will not work in this container"
+  fi
+}
+
+configure_timezone() {
+  local tz="${TZ:-UTC}"
+  if [ -f "/usr/share/zoneinfo/${tz}" ]; then
+    ln -sf "/usr/share/zoneinfo/${tz}" /etc/localtime
+    printf '%s\n' "${tz}" > /etc/timezone
+  else
+    warn "unknown TZ '${tz}', keeping UTC"
+  fi
+}
+
+prepare_home() {
+  # /home is the volume mount point; keep it traversable but root-owned.
+  chown root:root /home
+  chmod 0755 /home
+  install -d -m 0750 -o "${DEV_USER}" -g "${DEV_USER}" "${DEV_HOME}"
+  if [ ! -f "${INIT_MARKER}" ]; then
+    log "first boot: seeding ${DEV_HOME} on the persistent volume"
+    cp -an /etc/skel/. "${DEV_HOME}/"
+    mkdir -p "${DEV_HOME}/.ssh" "${DEV_HOME}/.local/bin" "${DEV_HOME}/.npm-global" \
+      "${DEV_HOME}/.config/devbox" "${WORKSPACE_DIR}"
+    touch "${DEV_HOME}/.ssh/authorized_keys"
+    chown -R "${DEV_USER}:${DEV_USER}" "${DEV_HOME}"
+    date -u +%FT%TZ > "${INIT_MARKER}"
+    chown "${DEV_USER}:${DEV_USER}" "${INIT_MARKER}"
+  else
+    # Never walk the whole volume on every boot; repair only what sshd checks.
+    chown "${DEV_USER}:${DEV_USER}" "${DEV_HOME}"
+    if [ -d "${DEV_HOME}/.ssh" ]; then
+      chown "${DEV_USER}:${DEV_USER}" "${DEV_HOME}/.ssh"
+    fi
+  fi
+  if [ -d "${DEV_HOME}/.ssh" ]; then
+    chmod 0700 "${DEV_HOME}/.ssh"
+  fi
+}
+
+write_env_file() {
+  local name names=("${SHARED_VARS[@]}") extra=()
+  if [ -n "${DEVBOX_ENV_PASSTHROUGH:-}" ]; then
+    IFS=', ' read -r -a extra <<< "${DEVBOX_ENV_PASSTHROUGH}"
+    names+=("${extra[@]}")
+  fi
+  install -d -m 0755 /etc/devbox
+  (
+    umask 027
+    {
+      echo "# Generated at container start from Railway variables. Do not edit."
+      for name in "${names[@]}"; do
+        [[ "${name}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+        case " ${SECRET_VARS[*]} " in
+          *" ${name} "*) continue ;;
+        esac
+        if [ -n "${!name:-}" ]; then
+          printf 'export %s=%q\n' "${name}" "${!name}"
+        fi
+      done
+    } > "${ENV_FILE}"
+  )
+  chown "root:${DEV_USER}" "${ENV_FILE}"
+  chmod 0640 "${ENV_FILE}"
+}
+
+configure_git() {
+  if [ -n "${GIT_USER_NAME:-}" ]; then
+    as_dev git config --global user.name "${GIT_USER_NAME}" || warn "could not set git user.name"
+  fi
+  if [ -n "${GIT_USER_EMAIL:-}" ]; then
+    as_dev git config --global user.email "${GIT_USER_EMAIL}" || warn "could not set git user.email"
+  fi
+  if [ -n "${GITHUB_TOKEN:-}${GH_TOKEN:-}" ]; then
+    as_dev env GITHUB_TOKEN="${GITHUB_TOKEN:-}" GH_TOKEN="${GH_TOKEN:-}" gh auth setup-git >/dev/null 2>&1 \
+      || warn "gh auth setup-git failed; HTTPS git auth via token is not configured"
+  fi
+}
+
+clone_repo_once() {
+  [ -n "${GIT_REPO:-}" ] || return 0
+  local target
+  target="${WORKSPACE_DIR}/$(basename "${GIT_REPO%.git}")"
+  [ -e "${target}" ] && return 0
+  log "cloning ${GIT_REPO} into ${target} (background)"
+  (
+    as_dev env GITHUB_TOKEN="${GITHUB_TOKEN:-}" GH_TOKEN="${GH_TOKEN:-}" \
+      git clone --quiet -- "${GIT_REPO}" "${target}" \
+      && log "clone of ${GIT_REPO} finished" \
+      || warn "clone of ${GIT_REPO} failed (check GIT_REPO and GITHUB_TOKEN)"
+  ) &
+}
+
+setup_host_keys() {
+  install -d -m 0700 -o root -g root "${STATE_DIR}" "${HOSTKEY_DIR}"
+  local type key
+  for type in ed25519 rsa; do
+    key="${HOSTKEY_DIR}/ssh_host_${type}_key"
+    if [ ! -f "${key}" ]; then
+      if [ "${type}" = "rsa" ]; then
+        ssh-keygen -q -t rsa -b 3072 -N '' -C "devbox-host" -f "${key}"
+      else
+        ssh-keygen -q -t "${type}" -N '' -C "devbox-host" -f "${key}"
+      fi
+      log "generated SSH host key ${key} (kept on the volume)"
+    elif [ ! -f "${key}.pub" ]; then
+      ssh-keygen -y -f "${key}" > "${key}.pub"
+    fi
+    chmod 0600 "${key}"
+    chmod 0644 "${key}.pub"
+  done
+}
+
+setup_ssh_auth() {
+  if [ -n "${SSH_PASSWORD:-}" ]; then
+    printf '%s:%s\n' "${DEV_USER}" "${SSH_PASSWORD}" | chpasswd
+    PASSWORD_AUTH="yes"
+  else
+    usermod -p '*' "${DEV_USER}"
+  fi
+
+  local tmp env_keys=0 user_keys=0
+  tmp="$(mktemp)"
+  "${LIB_DIR}/render-authorized-keys" > "${tmp}"
+  env_keys="$(grep -c . "${tmp}" || true)"
+  if [ "${env_keys}" -gt 0 ]; then
+    install -m 0644 -o root -g root "${tmp}" "${AUTHORIZED_KEYS_FILE}"
+  else
+    rm -f "${AUTHORIZED_KEYS_FILE}"
+  fi
+  rm -f "${tmp}"
+  if [ -s "${DEV_HOME}/.ssh/authorized_keys" ]; then
+    user_keys="$(grep -cvE '^[[:space:]]*(#|$)' "${DEV_HOME}/.ssh/authorized_keys" || true)"
+  fi
+
+  log "SSH auth: password ${PASSWORD_AUTH}, ${env_keys} key(s) from SSH_AUTHORIZED_KEYS, ${user_keys} key(s) in ~/.ssh/authorized_keys"
+  if [ "${PASSWORD_AUTH}" = "no" ] && [ "${env_keys}" -eq 0 ] && [ "${user_keys}" -eq 0 ]; then
+    warn "no SSH credentials are configured: set SSH_PASSWORD or SSH_AUTHORIZED_KEYS, or add a key to ~/.ssh/authorized_keys from the web terminal"
+  fi
+}
+
+start_sshd() {
+  DEVBOX_SSH_PORT="${SSH_PORT}" \
+  DEVBOX_HOSTKEY_DIR="${HOSTKEY_DIR}" \
+  DEVBOX_USER="${DEV_USER}" \
+  DEVBOX_PASSWORD_AUTH="${PASSWORD_AUTH}" \
+    "${LIB_DIR}/render-sshd-config" > /etc/ssh/sshd_config.devbox
+  install -m 0644 /etc/ssh/sshd_config.devbox /etc/ssh/sshd_config
+  rm -f /etc/ssh/sshd_config.devbox
+  install -d -m 0755 /run/sshd
+  /usr/sbin/sshd -t -f /etc/ssh/sshd_config || die "sshd configuration test failed"
+  log "starting sshd on port ${SSH_PORT}"
+  supervise sshd /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config
+}
+
+start_web_terminal() {
+  if [ "${WEB_TERMINAL_ENABLED}" != "true" ]; then
+    log "web terminal disabled (WEB_TERMINAL=${WEB_TERMINAL:-})"
+    return 0
+  fi
+  log "starting web terminal (ttyd) on 127.0.0.1:${TTYD_PORT}, served at /terminal/ behind basic auth"
+  supervise ttyd setpriv --reuid="${DEV_USER}" --regid="${DEV_USER}" --init-groups \
+    env -i \
+      HOME="${DEV_HOME}" USER="${DEV_USER}" LOGNAME="${DEV_USER}" SHELL=/bin/bash \
+      PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+      LANG="${LANG:-C.UTF-8}" LC_ALL="${LC_ALL:-C.UTF-8}" TZ="${TZ:-UTC}" \
+    /usr/local/bin/ttyd \
+      --port "${TTYD_PORT}" \
+      --interface 127.0.0.1 \
+      --base-path /terminal \
+      --writable \
+      --cwd "${DEV_HOME}" \
+      /usr/local/bin/devbox-web-shell
+}
+
+write_status_page() {
+  local fingerprints
+  fingerprints="$(for pub in "${HOSTKEY_DIR}"/ssh_host_*_key.pub; do ssh-keygen -l -E sha256 -f "${pub}"; done)"
+  install -d -m 0755 "${RUN_DIR}" "${RUN_DIR}/www"
+  printf '%s\n' "${fingerprints}" > "${RUN_DIR}/ssh_host_fingerprints.txt"
+  log "SSH host key fingerprints:"
+  printf '%s\n' "${fingerprints}" | sed 's/^/[devbox]   /'
+
+  {
+    printf 'DEVBOX_SSH_HOST=%q\n' "${RAILWAY_TCP_PROXY_DOMAIN:-}"
+    printf 'DEVBOX_SSH_PORT=%q\n' "${RAILWAY_TCP_PROXY_PORT:-}"
+    printf 'DEVBOX_PUBLIC_DOMAIN=%q\n' "${RAILWAY_PUBLIC_DOMAIN:-}"
+    printf 'DEVBOX_PASSWORD_AUTH=%q\n' "${PASSWORD_AUTH}"
+    printf 'DEVBOX_WEB_TERMINAL=%q\n' "${WEB_TERMINAL_ENABLED}"
+  } > "${RUN_DIR}/info.env"
+  chmod 0644 "${RUN_DIR}/info.env" "${RUN_DIR}/ssh_host_fingerprints.txt"
+
+  DEVBOX_SSH_HOST="${RAILWAY_TCP_PROXY_DOMAIN:-}" \
+  DEVBOX_SSH_PORT="${RAILWAY_TCP_PROXY_PORT:-}" \
+  DEVBOX_USER="${DEV_USER}" \
+  DEVBOX_PASSWORD_AUTH="${PASSWORD_AUTH}" \
+  DEVBOX_WEB_TERMINAL="${WEB_TERMINAL_ENABLED}" \
+  DEVBOX_FINGERPRINTS_FILE="${RUN_DIR}/ssh_host_fingerprints.txt" \
+  DEVBOX_VERSIONS_FILE=/etc/devbox/versions.txt \
+    "${LIB_DIR}/render-status-page" > "${RUN_DIR}/www/index.html"
+  chmod 0644 "${RUN_DIR}/www/index.html"
+
+  if [ -n "${RAILWAY_TCP_PROXY_DOMAIN:-}" ] && [ -n "${RAILWAY_TCP_PROXY_PORT:-}" ]; then
+    log "connect with: ssh -p ${RAILWAY_TCP_PROXY_PORT} ${DEV_USER}@${RAILWAY_TCP_PROXY_DOMAIN}"
+  else
+    warn "RAILWAY_TCP_PROXY_DOMAIN/PORT are not set; check the service's TCP proxy under Settings > Networking"
+  fi
+}
+
+start_background_jobs() {
+  local packages="${APT_PACKAGES:-}"
+  if [ -r "${DEV_HOME}/.config/devbox/apt-packages" ]; then
+    packages="${packages} $(grep -vE '^[[:space:]]*(#|$)' "${DEV_HOME}/.config/devbox/apt-packages" | tr '\n' ' ' || true)"
+  fi
+  if [ -n "${packages// /}" ]; then
+    log "reinstalling extra apt packages in the background (log: /var/log/devbox-apt.log)"
+    # Word splitting is intended: the list is validated by the installer.
+    # shellcheck disable=SC2086
+    ( "${LIB_DIR}/install-apt-packages" ${packages} > /var/log/devbox-apt.log 2>&1 \
+        && log "extra apt packages installed" \
+        || warn "extra apt packages failed; see /var/log/devbox-apt.log" ) &
+  fi
+  clone_repo_once
+}
+
+exec_caddy() {
+  local hash caddy_home="${RUN_DIR}/caddy"
+  install -d -m 0750 -o www-data -g www-data "${caddy_home}"
+  hash="$(printf '%s\n' "${WEB_PASSWORD}" | /usr/local/bin/caddy hash-password --algorithm bcrypt --bcrypt-cost 10)" \
+    || die "could not hash WEB_PASSWORD with caddy hash-password"
+  DEVBOX_HTTP_PORT="${HTTP_PORT}" \
+  DEVBOX_WEB_USER="${DEV_USER}" \
+  DEVBOX_WEB_HASH="${hash}" \
+  DEVBOX_WEB_TERMINAL="${WEB_TERMINAL_ENABLED}" \
+  DEVBOX_TTYD_PORT="${TTYD_PORT}" \
+  DEVBOX_WWW_DIR="${RUN_DIR}/www" \
+    "${LIB_DIR}/render-caddyfile" > "${RUN_DIR}/Caddyfile"
+  chown root:www-data "${RUN_DIR}/Caddyfile"
+  chmod 0640 "${RUN_DIR}/Caddyfile"
+
+  local caddy_env=(
+    env -i
+    HOME="${caddy_home}" XDG_DATA_HOME="${caddy_home}/data" XDG_CONFIG_HOME="${caddy_home}/config"
+    PATH=/usr/local/bin:/usr/bin:/bin
+  )
+  setpriv --reuid=www-data --regid=www-data --init-groups "${caddy_env[@]}" \
+    /usr/local/bin/caddy validate --config "${RUN_DIR}/Caddyfile" --adapter caddyfile >/dev/null 2>&1 \
+    || die "generated Caddyfile is invalid; run 'caddy validate --config ${RUN_DIR}/Caddyfile --adapter caddyfile' for details"
+
+  local served="status page"
+  if [ "${WEB_TERMINAL_ENABLED}" = "true" ]; then
+    served="status page and /terminal/"
+  fi
+  log "serving /healthz (public) plus the ${served} behind basic auth on :${HTTP_PORT} (user ${DEV_USER}, password WEB_PASSWORD)"
+  exec setpriv --reuid=www-data --regid=www-data --init-groups "${caddy_env[@]}" \
+    /usr/local/bin/caddy run --config "${RUN_DIR}/Caddyfile" --adapter caddyfile
+}
+
+main() {
+  validate_inputs
+  check_runtime
+  configure_timezone
+  prepare_home
+  write_env_file
+  configure_git
+  setup_host_keys
+  setup_ssh_auth
+  start_sshd
+  start_web_terminal
+  write_status_page
+  start_background_jobs
+  exec_caddy
+}
+
+main "$@"

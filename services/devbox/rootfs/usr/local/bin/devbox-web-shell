@@ -1,0 +1,8 @@
+#!/bin/sh
+# Command ttyd runs for each browser connection: attach to (or create) the
+# persistent tmux session "web", so work keeps running when the tab closes.
+cd "${HOME:-/home/dev}" 2>/dev/null || cd /
+if command -v tmux >/dev/null 2>&1; then
+  exec tmux new-session -A -s web
+fi
+exec bash -l

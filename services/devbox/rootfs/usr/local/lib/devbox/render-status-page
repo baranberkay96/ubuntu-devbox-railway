@@ -1,0 +1,136 @@
+#!/bin/sh
+# Prints the status page (index.html) served behind basic auth on $PORT.
+# The page shows how to connect; it never contains passwords or API keys.
+#
+# Inputs (environment):
+#   DEVBOX_SSH_HOST, DEVBOX_SSH_PORT  Railway TCP proxy domain and port (may be empty)
+#   DEVBOX_USER                       SSH user name
+#   DEVBOX_PASSWORD_AUTH              yes|no
+#   DEVBOX_WEB_TERMINAL               true|false
+#   DEVBOX_FINGERPRINTS_FILE          output of ssh-keygen -l for the host keys
+#   DEVBOX_VERSIONS_FILE              "name|version" lines from collect-versions
+set -eu
+
+esc() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' \
+    -e 's/"/\&quot;/g' -e "s/'/\&#39;/g"
+}
+
+user="$(esc "${DEVBOX_USER:-dev}")"
+host_raw="${DEVBOX_SSH_HOST:-}"
+port_raw="${DEVBOX_SSH_PORT:-}"
+if [ -n "${host_raw}" ] && [ -n "${port_raw}" ]; then
+  host="$(esc "${host_raw}")"
+  port="$(esc "${port_raw}")"
+  ssh_cmd="ssh -p ${port} ${user}@${host}"
+  proxy_note=""
+else
+  host="{tcp-proxy-domain}"
+  port="{tcp-proxy-port}"
+  ssh_cmd="ssh -p ${port} ${user}@${host}"
+  proxy_note="<p class=\"warn\">No TCP proxy was found for this service. Add one for port 22 under Settings &rarr; Networking, then redeploy.</p>"
+fi
+
+if [ "${DEVBOX_PASSWORD_AUTH:-no}" = "yes" ]; then
+  auth_note="Password login is on: use the value of <code>SSH_PASSWORD</code> from the service's Variables tab. Keys from <code>SSH_AUTHORIZED_KEYS</code> and <code>~/.ssh/authorized_keys</code> also work."
+else
+  auth_note="Password login is off: only keys from <code>SSH_AUTHORIZED_KEYS</code> and <code>~/.ssh/authorized_keys</code> are accepted."
+fi
+
+if [ "${DEVBOX_WEB_TERMINAL:-false}" = "true" ]; then
+  terminal_html="<p><a class=\"button\" href=\"/terminal/\">Open the web terminal</a></p><p class=\"muted\">The browser terminal attaches to the tmux session <code>web</code>, so it keeps running when you close the tab. From SSH: <code>tmux attach -t web</code>.</p>"
+else
+  terminal_html="<p class=\"muted\">The web terminal is disabled (<code>WEB_TERMINAL=false</code>).</p>"
+fi
+
+fingerprints_html=""
+if [ -r "${DEVBOX_FINGERPRINTS_FILE:-/nonexistent}" ]; then
+  while IFS= read -r line; do
+    [ -n "${line}" ] || continue
+    fingerprints_html="${fingerprints_html}$(esc "${line}")
+"
+  done < "${DEVBOX_FINGERPRINTS_FILE}"
+fi
+
+versions_html=""
+if [ -r "${DEVBOX_VERSIONS_FILE:-/nonexistent}" ]; then
+  while IFS='|' read -r name version; do
+    [ -n "${name}" ] || continue
+    versions_html="${versions_html}<tr><td>$(esc "${name}")</td><td><code>$(esc "${version}")</code></td></tr>"
+  done < "${DEVBOX_VERSIONS_FILE}"
+fi
+
+cat <<EOF
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Ubuntu Dev Box</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f7f7f5; --fg: #1d1d1b; --muted: #5f5f5a; --card: #ffffff; --line: #deded8; --accent: #c2410c; --code: #f0f0eb; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #141413; --fg: #ececea; --muted: #a3a39e; --card: #1e1e1c; --line: #33332f; --accent: #fb923c; --code: #2a2a27; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  h2 { font-size: 1.1rem; margin: 0 0 12px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; margin: 16px 0; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; background: var(--code); border-radius: 6px; }
+  code { padding: 1px 5px; }
+  pre { padding: 12px 14px; overflow-x: auto; margin: 8px 0; white-space: pre; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .muted { color: var(--muted); }
+  .warn { color: var(--accent); font-weight: 600; }
+  .button { display: inline-block; background: var(--accent); color: #fff; padding: 8px 14px; border-radius: 8px; text-decoration: none; font-weight: 600; }
+  @media (prefers-color-scheme: dark) { .button { color: #141413; } }
+</style>
+</head>
+<body>
+<main>
+<h1>Ubuntu Dev Box</h1>
+<p class="muted">Ubuntu 24.04 on Railway with SSH, tmux and AI coding CLIs. Your home directory is on a persistent volume.</p>
+
+<section>
+<h2>Connect over SSH</h2>
+${proxy_note}
+<pre>${ssh_cmd}</pre>
+<p>${auth_note}</p>
+<p>Add this to <code>~/.ssh/config</code> on your computer to connect with <code>ssh devbox</code>, VS Code Remote-SSH or any SSH client:</p>
+<pre>Host devbox
+  HostName ${host}
+  Port ${port}
+  User ${user}
+  ServerAliveInterval 30</pre>
+<p>On the first connection, check that the host key fingerprint matches one of these (they stay the same across redeploys):</p>
+<pre>${fingerprints_html}</pre>
+</section>
+
+<section>
+<h2>Web terminal</h2>
+${terminal_html}
+</section>
+
+<section>
+<h2>Sign in to the AI CLIs</h2>
+<table>
+<tr><th>CLI</th><th>Subscription login</th><th>API key variable</th></tr>
+<tr><td>Claude Code</td><td><code>claude</code>, open the URL, paste the code back</td><td><code>ANTHROPIC_API_KEY</code> or <code>CLAUDE_CODE_OAUTH_TOKEN</code></td></tr>
+<tr><td>Codex CLI</td><td><code>codex login --device-auth</code></td><td><code>OPENAI_API_KEY</code></td></tr>
+<tr><td>Gemini CLI</td><td><code>NO_BROWSER=true gemini</code> (eligible Google accounts)</td><td><code>GEMINI_API_KEY</code></td></tr>
+<tr><td>OpenCode</td><td><code>opencode auth login</code></td><td><code>OPENROUTER_API_KEY</code> and others</td></tr>
+</table>
+<p class="muted">Logins are stored under your home directory and survive redeploys. Run <code>devbox-info</code> in a shell to see this page's details.</p>
+</section>
+
+<section>
+<h2>Installed tools</h2>
+<table>${versions_html}</table>
+<p class="muted">Everything under <code>/home/dev</code> persists, including <code>npm i -g</code> (to <code>~/.npm-global</code>), <code>pipx</code>, <code>uv tool</code> and <code>~/.local/bin</code>. Packages installed with <code>sudo apt</code> reset on redeploy unless listed in <code>APT_PACKAGES</code> or <code>~/.config/devbox/apt-packages</code>.</p>
+</section>
+</main>
+</body>
+</html>
+EOF
