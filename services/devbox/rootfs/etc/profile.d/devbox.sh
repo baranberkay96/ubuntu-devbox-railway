@@ -15,6 +15,11 @@ if [ "$(id -u)" -ne 0 ]; then
   unset devbox_dir
   export PATH
   export NPM_CONFIG_PREFIX="${HOME}/.npm-global"
+  # The image's Claude Code is pinned in the Dockerfile and cannot update itself;
+  # after `claude install` the copy in ~/.local/bin updates on its own.
+  if [ ! -e "${HOME}/.local/bin/claude" ]; then
+    export DISABLE_AUTOUPDATER=1
+  fi
 fi
 export EDITOR="${EDITOR:-nano}"
 export LANG="${LANG:-C.UTF-8}"

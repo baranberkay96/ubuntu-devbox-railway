@@ -17,13 +17,16 @@ FROM ubuntu:noble-20260930.1@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5e
 ARG PIN_NODE=24.22.0
 ARG PIN_NODE_SHA256_AMD64=cc2f601cee82d9a5a233302fe307abc600727035fd7d2c3a3571755989e95008
 ARG PIN_NODE_SHA256_ARM64=fef00bb4d36e1c50104a9775a10359beee98f162b4104dd12472c75065c6a143
-ARG PIN_CLAUDE_CODE_DEB=2.1.292-1
-ARG PIN_CLAUDE_CODE_KEY_FPR=31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
+ARG PIN_CLAUDE_CODE=2.1.311
+ARG PIN_CLAUDE_CODE_SHA256_AMD64=86dc1fcc69498159eaf15f446613e847010f9036bfbbdffd4c49350be8489ada
+ARG PIN_CLAUDE_CODE_SHA256_ARM64=2e2496c9a8065df93acb0fca2d341f59a6b8777649b2e025ab8c9bcd5eef61f3
 ARG PIN_CODEX=0.163.0
 ARG PIN_GEMINI_CLI=0.64.0
 ARG PIN_OPENCODE=1.19.3
 ARG PIN_UV=0.13.1
-ARG PIN_GH=2.102.0
+ARG PIN_GH=2.103.3
+ARG PIN_GH_SHA256_AMD64=4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d
+ARG PIN_GH_SHA256_ARM64=ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63
 ARG PIN_TTYD=1.7.7
 ARG PIN_TTYD_SHA256_AMD64=8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
 ARG PIN_TTYD_SHA256_ARM64=b38acadd89d1d396a0f5649aa52c539edbad07f4bc7348b27b4f4b7219dd4165
@@ -75,24 +78,25 @@ RUN case "$(dpkg --print-architecture)" in \
  && corepack enable \
  && node --version && npm --version
 
-# GitHub CLI and Claude Code from their vendors' signed apt repositories.
-# The Claude Code signing key fingerprint is checked against Anthropic's docs.
-RUN install -d -m 0755 /etc/apt/keyrings \
- && curl -fsSLo /etc/apt/keyrings/githubcli-archive-keyring.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg \
- && chmod 0644 /etc/apt/keyrings/githubcli-archive-keyring.gpg \
- && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-      > /etc/apt/sources.list.d/github-cli.list \
- && curl -fsSLo /etc/apt/keyrings/claude-code.asc https://downloads.claude.ai/keys/claude-code.asc \
- && chmod 0644 /etc/apt/keyrings/claude-code.asc \
- && key_fpr="$(gpg --show-keys --with-colons /etc/apt/keyrings/claude-code.asc | awk -F: '$1 == "fpr" { print $10; exit }')" \
- && if [ "${key_fpr}" != "${PIN_CLAUDE_CODE_KEY_FPR}" ]; then \
-      echo "Claude Code signing key fingerprint mismatch: '${key_fpr}'" >&2; exit 1; \
-    fi \
- && echo "deb [signed-by=/etc/apt/keyrings/claude-code.asc] https://downloads.claude.ai/claude-code/apt/stable stable main" \
-      > /etc/apt/sources.list.d/claude-code.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends "gh=${PIN_GH}" "claude-code=${PIN_CLAUDE_CODE_DEB}" \
- && rm -rf /var/lib/apt/lists/* /root/.gnupg \
+# GitHub CLI and Claude Code from their vendors' release downloads, checksum-verified.
+# Not from their apt repositories: those drop old versions (the GitHub CLI repo
+# lists only the newest release), which broke every rebuild of a pinned version.
+RUN case "$(dpkg --print-architecture)" in \
+      amd64) gh_arch=amd64; gh_sha="${PIN_GH_SHA256_AMD64}"; claude_arch=linux-x64;   claude_sha="${PIN_CLAUDE_CODE_SHA256_AMD64}" ;; \
+      arm64) gh_arch=arm64; gh_sha="${PIN_GH_SHA256_ARM64}"; claude_arch=linux-arm64; claude_sha="${PIN_CLAUDE_CODE_SHA256_ARM64}" ;; \
+      *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSLo /tmp/gh.tar.gz "https://github.com/cli/cli/releases/download/v${PIN_GH}/gh_${PIN_GH}_linux_${gh_arch}.tar.gz" \
+ && echo "${gh_sha}  /tmp/gh.tar.gz" | sha256sum -c - \
+ && tar -xzf /tmp/gh.tar.gz -C /tmp --no-same-owner \
+ && install -m 0755 "/tmp/gh_${PIN_GH}_linux_${gh_arch}/bin/gh" /usr/local/bin/gh \
+ && install -d /usr/local/share/doc/gh /usr/share/bash-completion/completions \
+ && install -m 0644 "/tmp/gh_${PIN_GH}_linux_${gh_arch}/LICENSE" /usr/local/share/doc/gh/LICENSE \
+ && /usr/local/bin/gh completion -s bash > /usr/share/bash-completion/completions/gh \
+ && rm -rf /tmp/gh.tar.gz "/tmp/gh_${PIN_GH}_linux_${gh_arch}" \
+ && curl -fsSLo /usr/local/bin/claude "https://downloads.claude.ai/claude-code-releases/${PIN_CLAUDE_CODE}/${claude_arch}/claude" \
+ && echo "${claude_sha}  /usr/local/bin/claude" | sha256sum -c - \
+ && chmod 0755 /usr/local/bin/claude \
  && gh --version && claude --version
 
 # ttyd (web terminal) and Caddy (HTTP front on $PORT): static release binaries,

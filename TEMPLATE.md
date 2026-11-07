@@ -27,12 +27,12 @@ The description is delivered as written: the service runs continuously (restart 
 | Base image | `ubuntu:noble-20260930.1@sha256:68ee2200…aff33ac` (= `24.04` today) | Ubuntu 24.04 LTS | pushed 2026-10-17 | 2026-10-20 |
 | OpenSSH | Ubuntu `openssh-server` (noble-updates) | 9.6p1 | distro | 2026-10-20 |
 | Node.js | nodejs.org tarball, SHA-256 pinned | 24.22.0 (LTS "Krypton") | 2026-10-14 | 2026-10-20 |
-| Claude Code | Anthropic apt repo, `stable` channel, key fingerprint pinned | 2.1.292-1 | 2026-10-06 | 2026-10-20 |
+| Claude Code | Anthropic native release download (`downloads.claude.ai/claude-code-releases`), `stable` channel, SHA-256 pinned | 2.1.311 | 2026-11 | 2026-11-07 |
 | OpenAI Codex CLI | npm `@openai/codex` (`latest`) | 0.163.0 | 2026-10-15 | 2026-10-20 |
 | Gemini CLI | npm `@google/gemini-cli` (`latest`) | 0.64.0 | 2026-10-13 | 2026-10-20 |
 | OpenCode | npm `opencode-ai` (`latest`) | 1.19.3 | 2026-10-16 | 2026-10-20 |
 | uv | Astral installer `astral.sh/uv/0.13.1/install.sh` | 0.13.1 | 2026-10-14 | 2026-10-20 |
-| GitHub CLI | cli.github.com apt repo | 2.102.0 | 2026-09-30 | 2026-10-20 |
+| GitHub CLI | GitHub release tarball (github.com/cli/cli), SHA-256 pinned | 2.103.3 | 2026-11-03 | 2026-11-07 |
 | ttyd | GitHub release binary, SHA-256 pinned | 1.7.7 (latest) | 2024-03-30 | 2026-10-20 |
 | Caddy | GitHub release tarball, SHA-512 pinned | 2.11.7 | 2026-10-03 | 2026-10-20 |
 
@@ -73,7 +73,7 @@ All pins are `PIN_*` build args at the top of `services/devbox/Dockerfile` (the 
 | Replicas | 1 (volume-backed, single user) |
 
 Files in `services/devbox/`:
-- `Dockerfile`: digest-pinned Ubuntu 24.04, apt toolchain, user `dev` (UID 1000, passwordless sudo, stock `ubuntu` user removed), checksum-verified Node.js, ttyd and Caddy, signed apt repos for gh and Claude Code (key fingerprint checked), uv installer, npm CLIs, PAM tweaks for containers (`pam_loginuid` optional, Ubuntu's dynamic motd off), host keys removed from the image, tool versions recorded in `/etc/devbox/versions.txt`.
+- `Dockerfile`: digest-pinned Ubuntu 24.04, apt toolchain, user `dev` (UID 1000, passwordless sudo, stock `ubuntu` user removed), checksum-verified Node.js, ttyd and Caddy, checksum-verified release downloads for gh and Claude Code (key fingerprint checked), uv installer, npm CLIs, PAM tweaks for containers (`pam_loginuid` optional, Ubuntu's dynamic motd off), host keys removed from the image, tool versions recorded in `/etc/devbox/versions.txt`.
 - `rootfs/usr/local/bin/devbox-entrypoint` (bash): validates inputs, un-exports `SSH_PASSWORD`/`WEB_PASSWORD` so no child process inherits them, seeds `/home/dev` on first boot (non-recursive ownership repair afterwards), writes API keys and Railway info to `/etc/devbox/env.sh` (0640 root:dev), configures git and the gh credential helper, generates ed25519 and RSA host keys once on the volume, sets SSH auth, renders and tests `sshd_config`, starts sshd and ttyd under `supervise`, renders the status page, starts background jobs (`APT_PACKAGES`, `GIT_REPO`), hashes `WEB_PASSWORD` with bcrypt, renders and validates the Caddyfile and execs Caddy as `www-data`.
 - `rootfs/usr/local/lib/devbox/`: `supervise` (restart loop, 3→30 s backoff, clean TERM), `render-sshd-config`, `render-caddyfile`, `render-status-page`, `render-authorized-keys` (accepts keys one per line, several per line or `\n`-separated; validates each with `ssh-keygen`), `install-apt-packages`, `collect-versions`.
 - `rootfs/usr/local/bin/devbox-info` (SSH command, fingerprints, versions), `devbox-web-shell` (ttyd → `tmux new -A -s web`).
@@ -115,12 +115,12 @@ No required inputs. The box boots with generated passwords, and users log in to 
 2. **Works out of the box, safely**: `SSH_PASSWORD` and `WEB_PASSWORD` come from `secret()`; zero required inputs. The market templates need user-typed credentials, and the leader logs in as root.
 3. **No root SSH**: user `dev` with passwordless sudo, `AllowUsers dev`, hardened sshd (limits above), key-only mode, robust `SSH_AUTHORIZED_KEYS` parsing.
 4. **Stable host keys**: generated once on the volume, so no "REMOTE HOST IDENTIFICATION HAS CHANGED" after redeploys; fingerprints are printed in the logs, on the status page and by `devbox-info`.
-5. **Four AI CLIs, pinned, official channels**: Claude Code from Anthropic's signed apt repo (fingerprint checked), Codex, Gemini CLI and OpenCode from their npm packages. No third-party model routing by default.
+5. **Four AI CLIs, pinned, official channels**: Claude Code from Anthropic's native release downloads (SHA-256 pinned), Codex, Gemini CLI and OpenCode from their npm packages. No third-party model routing by default.
 6. **Healthcheck and PORT** on a public `/healthz` (Rule 8.1); all other HTTP paths need a password. The market templates have no healthcheck.
 7. **Status page and optional web terminal** behind basic auth over HTTPS; the browser terminal runs as `dev` in tmux, never as root.
 8. **Railway runtime fit** (Rule 8.3): tini as subreaper reaps orphaned agent processes; sshd and ttyd run under a restart loop; restart policy ALWAYS.
 9. **System packages that stick**: `APT_PACKAGES` / `~/.config/devbox/apt-packages` are reinstalled at each start.
-10. **Supply chain**: base image by digest; Node, ttyd and Caddy checksum-verified; signed apt repos; no `releases/latest` downloads.
+10. **Supply chain**: base image by digest; Node, ttyd, Caddy, gh and Claude Code checksum-verified; no `releases/latest` downloads.
 11. **Secrets stay out of shells**: passwords are un-exported before any child starts; API keys reach shells through a 0640 env file; the Caddyfile holds only a bcrypt hash.
 
 ## Resource estimate
@@ -158,7 +158,7 @@ AI usage is billed by the respective vendor. Minimum plan: **Trial** boots it (w
 - **Basic auth on the ttyd WebSocket through Railway's edge**: browsers resend same-origin basic auth credentials on the upgrade request; not tested on Railway.
 - **sudo on Railway**: works only if the runtime does not set `no_new_privs`; the entrypoint logs a warning if it does. SSH login itself does not depend on it.
 - **PAM password login in Railway's container runtime** (`pam_loginuid` made optional as a precaution) and `RAILWAY_TCP_PROXY_*` being present on the very first deploy are assumed from the market leader working on Railway.
-- **Claude Code apt retention**: the stable repo currently keeps 62 versions; when 2.1.292-1 is pruned, bump `PIN_CLAUDE_CODE_DEB`.
+- **Vendor apt retention** (fixed 2026-11-07): gh and Claude Code were pinned from their apt repos; cli.github.com lists only the newest gh, so once 2.103.3 replaced 2.102.0 on 2026-11-03 every build failed (`Version '2.102.0' for 'gh' was not found`) and the marketplace health dropped to 0%. Both now come from release downloads that keep every version.
 - **CLI sandboxes**: Claude Code's bubblewrap sandbox and Codex's Linux sandbox may be blocked by Railway's runtime (no user namespaces); then the CLIs run without their sandbox inside the container boundary.
 - **Gemini CLI**: since 2026-06-18 Google points unpaid and Google One users to Antigravity CLI; the template documents `GEMINI_API_KEY` as the remote login.
 - **Ubuntu `mawk`**: the key parser was tested with BWK awk (macOS); it uses only POSIX awk features that mawk 1.3.4 supports.

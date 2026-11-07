@@ -8,12 +8,12 @@
 | OpenSSH 9.6p1 | Ubuntu `openssh-server` | BSD-style | sshd, configured by our own generated `sshd_config` |
 | tmux, git, build-essential, ripgrep, jq, Python 3, pipx, tini and other tools | Ubuntu archive | various (GPL, ISC, MIT, BSD, PSF, ...) | Installed unmodified |
 | Node.js 24.22.0 LTS | https://nodejs.org/dist/ official tarball (SHA-256 checked) | MIT (plus bundled dependency licenses, kept in `/usr/local/share/doc/nodejs/LICENSE`) | Runtime for the npm-based CLIs |
-| Claude Code 2.1.292 | Anthropic's signed apt repository `downloads.claude.ai/claude-code/apt/stable` (key fingerprint checked) | Proprietary, Anthropic Commercial Terms of Service | Installed unmodified; use is subject to Anthropic's terms |
+| Claude Code 2.1.311 | Anthropic's native release download `downloads.claude.ai/claude-code-releases` (SHA-256 checked) | Proprietary, Anthropic Commercial Terms of Service | Installed unmodified; use is subject to Anthropic's terms |
 | OpenAI Codex CLI 0.163.0 | npm `@openai/codex`, https://github.com/openai/codex | Apache-2.0 | Installed unmodified |
 | Gemini CLI 0.64.0 | npm `@google/gemini-cli`, https://github.com/google-gemini/gemini-cli | Apache-2.0 | Installed unmodified |
 | OpenCode 1.19.3 | npm `opencode-ai`, https://github.com/anomalyco/opencode | MIT | Installed unmodified |
 | uv 0.13.1 | Astral installer `astral.sh/uv/0.13.1/install.sh`, https://github.com/astral-sh/uv | MIT or Apache-2.0 | Installed unmodified |
-| GitHub CLI 2.102.0 | cli.github.com apt repository, https://github.com/cli/cli | MIT | Installed unmodified |
+| GitHub CLI 2.103.3 | GitHub release tarball, https://github.com/cli/cli | MIT | Installed unmodified |
 | ttyd 1.7.7 | GitHub release binary (SHA-256 checked), https://github.com/tsl0922/ttyd | MIT, Copyright (c) 2016-2022 Shuanglei Tao | Web terminal, unmodified binary |
 | Caddy 2.11.7 | GitHub release tarball (SHA-512 checked), https://github.com/caddyserver/caddy | Apache-2.0 (license kept in `/usr/local/share/doc/caddy/LICENSE`) | HTTP front with basic auth, unmodified binary |
 
