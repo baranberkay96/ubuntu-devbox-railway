@@ -1,5 +1,6 @@
 {
   "name": "Ubuntu 24.04 Cloud Dev Box (SSH + Claude Code)",
+  "idSeed": "Ubuntu 24.04 Cloud Dev Box (SSH + Claude Code) / 2026-11-07",
   "description": "Always-on Ubuntu box with SSH, tmux and AI coding CLIs on persistent disk.",
   "category": "Other",
   "tags": [
