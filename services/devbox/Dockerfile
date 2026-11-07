@@ -13,6 +13,8 @@
 FROM ubuntu:noble-20260930.1@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac
 
 # Pinned versions. Bump deliberately; checksums must match the new release.
+# Every download retries: a dropped connection fails the whole build, and the
+# marketplace health score counts failed builds.
 # (PIN_ prefix keeps build args from colliding with the tools' own env variables.)
 ARG PIN_NODE=24.22.0
 ARG PIN_NODE_SHA256_AMD64=cc2f601cee82d9a5a233302fe307abc600727035fd7d2c3a3571755989e95008
@@ -69,7 +71,7 @@ RUN case "$(dpkg --print-architecture)" in \
       arm64) node_arch=arm64; node_sha="${PIN_NODE_SHA256_ARM64}" ;; \
       *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac \
- && curl -fsSLo /tmp/node.tar.xz "https://nodejs.org/dist/v${PIN_NODE}/node-v${PIN_NODE}-linux-${node_arch}.tar.xz" \
+ && curl -fsSL --retry 5 --retry-all-errors -o /tmp/node.tar.xz "https://nodejs.org/dist/v${PIN_NODE}/node-v${PIN_NODE}-linux-${node_arch}.tar.xz" \
  && echo "${node_sha}  /tmp/node.tar.xz" | sha256sum -c - \
  && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --no-same-owner \
  && rm -f /tmp/node.tar.xz /usr/local/CHANGELOG.md /usr/local/README.md \
@@ -86,7 +88,7 @@ RUN case "$(dpkg --print-architecture)" in \
       arm64) gh_arch=arm64; gh_sha="${PIN_GH_SHA256_ARM64}"; claude_arch=linux-arm64; claude_sha="${PIN_CLAUDE_CODE_SHA256_ARM64}" ;; \
       *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac \
- && curl -fsSLo /tmp/gh.tar.gz "https://github.com/cli/cli/releases/download/v${PIN_GH}/gh_${PIN_GH}_linux_${gh_arch}.tar.gz" \
+ && curl -fsSL --retry 5 --retry-all-errors -o /tmp/gh.tar.gz "https://github.com/cli/cli/releases/download/v${PIN_GH}/gh_${PIN_GH}_linux_${gh_arch}.tar.gz" \
  && echo "${gh_sha}  /tmp/gh.tar.gz" | sha256sum -c - \
  && tar -xzf /tmp/gh.tar.gz -C /tmp --no-same-owner \
  && install -m 0755 "/tmp/gh_${PIN_GH}_linux_${gh_arch}/bin/gh" /usr/local/bin/gh \
@@ -94,7 +96,7 @@ RUN case "$(dpkg --print-architecture)" in \
  && install -m 0644 "/tmp/gh_${PIN_GH}_linux_${gh_arch}/LICENSE" /usr/local/share/doc/gh/LICENSE \
  && /usr/local/bin/gh completion -s bash > /usr/share/bash-completion/completions/gh \
  && rm -rf /tmp/gh.tar.gz "/tmp/gh_${PIN_GH}_linux_${gh_arch}" \
- && curl -fsSLo /usr/local/bin/claude "https://downloads.claude.ai/claude-code-releases/${PIN_CLAUDE_CODE}/${claude_arch}/claude" \
+ && curl -fsSL --retry 5 --retry-all-errors -o /usr/local/bin/claude "https://downloads.claude.ai/claude-code-releases/${PIN_CLAUDE_CODE}/${claude_arch}/claude" \
  && echo "${claude_sha}  /usr/local/bin/claude" | sha256sum -c - \
  && chmod 0755 /usr/local/bin/claude \
  && gh --version && claude --version
@@ -106,10 +108,10 @@ RUN case "$(dpkg --print-architecture)" in \
       arm64) ttyd_arch=aarch64; ttyd_sha="${PIN_TTYD_SHA256_ARM64}"; caddy_arch=arm64; caddy_sha="${PIN_CADDY_SHA512_ARM64}" ;; \
       *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac \
- && curl -fsSLo /usr/local/bin/ttyd "https://github.com/tsl0922/ttyd/releases/download/${PIN_TTYD}/ttyd.${ttyd_arch}" \
+ && curl -fsSL --retry 5 --retry-all-errors -o /usr/local/bin/ttyd "https://github.com/tsl0922/ttyd/releases/download/${PIN_TTYD}/ttyd.${ttyd_arch}" \
  && echo "${ttyd_sha}  /usr/local/bin/ttyd" | sha256sum -c - \
  && chmod 0755 /usr/local/bin/ttyd \
- && curl -fsSLo /tmp/caddy.tar.gz "https://github.com/caddyserver/caddy/releases/download/v${PIN_CADDY}/caddy_${PIN_CADDY}_linux_${caddy_arch}.tar.gz" \
+ && curl -fsSL --retry 5 --retry-all-errors -o /tmp/caddy.tar.gz "https://github.com/caddyserver/caddy/releases/download/v${PIN_CADDY}/caddy_${PIN_CADDY}_linux_${caddy_arch}.tar.gz" \
  && echo "${caddy_sha}  /tmp/caddy.tar.gz" | sha512sum -c - \
  && install -d /usr/local/share/doc/caddy \
  && tar -xzf /tmp/caddy.tar.gz -C /usr/local/bin --no-same-owner caddy \
@@ -118,7 +120,7 @@ RUN case "$(dpkg --print-architecture)" in \
  && ttyd --version && caddy version
 
 # uv via Astral's official installer, pinned to a release.
-RUN curl -fsSL "https://astral.sh/uv/${PIN_UV}/install.sh" \
+RUN curl -fsSL --retry 5 --retry-all-errors "https://astral.sh/uv/${PIN_UV}/install.sh" \
       | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh \
  && uv --version && uvx --version
 
