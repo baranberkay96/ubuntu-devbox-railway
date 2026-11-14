@@ -41,6 +41,10 @@ if [ -t 1 ] && [ -z "${DEVBOX_MOTD_SHOWN:-}" ] && [ -r /etc/devbox/motd.txt ]; t
   case "${TMUX_PANE:-none}" in
     none|%0)
       cat /etc/devbox/motd.txt
+      if [ -r "${HOME}/.config/devbox/upgrade-notice.txt" ]; then
+        cat "${HOME}/.config/devbox/upgrade-notice.txt"
+        echo
+      fi
       export DEVBOX_MOTD_SHOWN=1
       ;;
   esac

@@ -1,24 +1,24 @@
 {
-  "name": "Ubuntu 24.04 Cloud Dev Box (SSH + Claude Code)",
+  "name": "Ubuntu 26.04 SSH + Claude Code Dev Box",
   "idSeed": "Ubuntu 24.04 Cloud Dev Box (SSH + Claude Code) / 2026-11-07",
-  "description": "Always-on Ubuntu box with SSH, tmux and AI coding CLIs on persistent disk.",
+  "description": "SSH + Claude Code in one click, no setup: web terminal, persistent disk.",
   "category": "Other",
   "tags": [
     "ubuntu",
     "ssh",
+    "claude-code",
+    "web-terminal",
     "devbox",
     "tmux",
-    "claude-code",
     "codex",
     "gemini-cli",
     "opencode",
-    "web-terminal",
     "ai-coding"
   ],
   "image": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/ubuntu-linux.svg",
   "upstream": {
-    "base": "ubuntu:noble-20260930.1",
-    "checked": "2026-10-20"
+    "base": "ubuntu:resolute-20261105.1",
+    "checked": "2026-11-14"
   },
   "services": {
     "Dev Box": {
@@ -43,7 +43,7 @@
       "variables": {
         "SSH_PASSWORD": {
           "defaultValue": "${{secret(24, \"abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789\")}}",
-          "description": "Password for SSH as user 'dev', generated at deploy. Clear it for key-only SSH (then set SSH_AUTHORIZED_KEYS). Minimum 12 characters.",
+          "description": "Password for SSH as user 'dev', generated at deploy. Clear it for key-only SSH. Under 12 characters turns password login off.",
           "required": false
         },
         "SSH_AUTHORIZED_KEYS": {
@@ -53,7 +53,7 @@
         },
         "WEB_PASSWORD": {
           "defaultValue": "${{secret(24, \"abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789\")}}",
-          "description": "Password (user 'dev') for the status page and web terminal on the public URL. Generated at deploy; only /healthz is public. Minimum 12 characters.",
+          "description": "Password (user 'dev') for the web terminal and status page, generated at deploy. 12-72 characters, else the web login stays locked.",
           "required": false
         },
         "WEB_TERMINAL": {

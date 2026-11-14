@@ -11,8 +11,9 @@
 # - Railway's TCP proxy hides the client IP (every connection comes from the
 #   proxy), so per-source banning (fail2ban, PerSourcePenalties) would lock out
 #   everyone. Brute force is limited by long generated passwords, MaxAuthTries,
-#   LoginGraceTime and MaxStartups instead.
-# - Target is OpenSSH 9.6 (Ubuntu 24.04): do not add keywords introduced later.
+#   LoginGraceTime and MaxStartups instead; OpenSSH's own per-source penalties
+#   (on by default since 9.8) are switched off for the same reason.
+# - Target is OpenSSH 10.2 (Ubuntu 26.04).
 set -eu
 
 port="${DEVBOX_SSH_PORT:-22}"
@@ -52,7 +53,9 @@ PermitEmptyPasswords no
 KbdInteractiveAuthentication no
 UsePAM yes
 
-# Brute-force and resource limits.
+# Brute-force and resource limits. Every client arrives from the TCP proxy's
+# address, so per-source penalties would penalise the owner along with attackers.
+PerSourcePenalties no
 MaxAuthTries 3
 LoginGraceTime 20
 MaxStartups 10:30:60

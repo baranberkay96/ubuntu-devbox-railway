@@ -38,7 +38,7 @@ else
 fi
 
 if [ "${DEVBOX_WEB_TERMINAL:-false}" = "true" ]; then
-  terminal_html="<p><a class=\"button\" href=\"/terminal/\">Open the web terminal</a></p><p class=\"muted\">The browser terminal attaches to the tmux session <code>web</code>, so it keeps running when you close the tab. From SSH: <code>tmux attach -t web</code>.</p>"
+  terminal_html="<p><a class=\"button\" href=\"/terminal/\">Open the web terminal</a></p><p>Then run <code>claude</code> and follow the login link (or <code>codex</code>, <code>gemini</code>, <code>opencode</code>).</p><p class=\"muted\">The browser terminal attaches to the tmux session <code>web</code>, so it keeps running when you close the tab. From SSH: <code>tmux attach -t web</code>.</p>"
 else
   terminal_html="<p class=\"muted\">The web terminal is disabled (<code>WEB_TERMINAL=false</code>).</p>"
 fi
@@ -91,7 +91,12 @@ cat <<EOF
 <body>
 <main>
 <h1>Ubuntu Dev Box</h1>
-<p class="muted">Ubuntu 24.04 on Railway with SSH, tmux and AI coding CLIs. Your home directory is on a persistent volume.</p>
+<p class="muted">Ubuntu 26.04 LTS on Railway with SSH, tmux and AI coding CLIs. Your home directory is on a persistent volume.</p>
+
+<section>
+<h2>Start in the browser</h2>
+${terminal_html}
+</section>
 
 <section>
 <h2>Connect over SSH</h2>
@@ -106,11 +111,6 @@ ${proxy_note}
   ServerAliveInterval 30</pre>
 <p>On the first connection, check that the host key fingerprint matches one of these (they stay the same across redeploys):</p>
 <pre>${fingerprints_html}</pre>
-</section>
-
-<section>
-<h2>Web terminal</h2>
-${terminal_html}
 </section>
 
 <section>

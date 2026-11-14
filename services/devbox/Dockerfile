@@ -1,40 +1,44 @@
 # syntax=docker/dockerfile:1
 #
-# Ubuntu 24.04 Cloud Dev Box for Railway.
+# Ubuntu 26.04 SSH + Claude Code Dev Box for Railway.
 #   - OpenSSH server for the Railway TCP proxy (user "dev", passwordless sudo,
 #     no root login, host keys persisted on the volume)
-#   - tmux, build tools, Node.js LTS, Python 3, uv
+#   - tmux, build tools, Node.js LTS (with corepack), Python 3, uv
 #   - Claude Code, OpenAI Codex CLI, Gemini CLI, OpenCode (pinned, official channels)
 #   - Caddy on $PORT: public /healthz, password-protected status page and ttyd
 #     web terminal
 # Persistent data lives on a Railway volume mounted at /home.
 #
-# Base image pinned by dated tag and digest (Docker Hub library/ubuntu, checked 2026-10-20).
-FROM ubuntu:noble-20260930.1@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac
+# Base image pinned by dated tag and digest (Docker Hub library/ubuntu, checked 2026-11-14).
+# resolute-20261105.1 = 26.04 LTS "Resolute Raccoon" (same platform images as the 26.04 tag).
+FROM ubuntu:resolute-20261105.1@sha256:66b8084a0d45bd4877992bd38e04b51bfa99bd57293364cb6391fb674771846e
 
 # Pinned versions. Bump deliberately; checksums must match the new release.
 # Every download retries: a dropped connection fails the whole build, and the
 # marketplace health score counts failed builds.
 # (PIN_ prefix keeps build args from colliding with the tools' own env variables.)
-ARG PIN_NODE=24.22.0
-ARG PIN_NODE_SHA256_AMD64=cc2f601cee82d9a5a233302fe307abc600727035fd7d2c3a3571755989e95008
-ARG PIN_NODE_SHA256_ARM64=fef00bb4d36e1c50104a9775a10359beee98f162b4104dd12472c75065c6a143
+ARG PIN_NODE=26.13.1
+ARG PIN_NODE_SHA256_AMD64=5c063e46bab0fbc1c17cc445d7ff129cbdcd0471be6ed83b6ab864f8143bc864
+ARG PIN_NODE_SHA256_ARM64=89e1853138db51e8b82d3e98ba9c0d3f2956a28e5e55ea1b7e12d25aae92d5dd
+ARG PIN_COREPACK=0.36.0
 ARG PIN_CLAUDE_CODE=2.1.311
 ARG PIN_CLAUDE_CODE_SHA256_AMD64=86dc1fcc69498159eaf15f446613e847010f9036bfbbdffd4c49350be8489ada
 ARG PIN_CLAUDE_CODE_SHA256_ARM64=2e2496c9a8065df93acb0fca2d341f59a6b8777649b2e025ab8c9bcd5eef61f3
-ARG PIN_CODEX=0.163.0
-ARG PIN_GEMINI_CLI=0.64.0
-ARG PIN_OPENCODE=1.19.3
-ARG PIN_UV=0.13.1
-ARG PIN_GH=2.103.3
-ARG PIN_GH_SHA256_AMD64=4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d
-ARG PIN_GH_SHA256_ARM64=ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63
+ARG PIN_CODEX=0.169.0
+ARG PIN_GEMINI_CLI=0.68.0
+ARG PIN_OPENCODE=1.19.5
+ARG PIN_UV=0.13.8
+ARG PIN_UV_SHA256_AMD64=5acfd9177cfecf0bf87578f059728215ccc884388988f55f7a65041b57387d91
+ARG PIN_UV_SHA256_ARM64=74f2f5c6024d397481db228db8fc25eed420db192243f88438c118e7e013e585
+ARG PIN_GH=2.104.0
+ARG PIN_GH_SHA256_AMD64=98cb101ad87dbbd3f6b2f2bfcbd43197ccd07643140121d8a9cfaa91eadbc24e
+ARG PIN_GH_SHA256_ARM64=cb34cefc6f4e77b90731374a2b737516bb8f3033c6ca46aa949e5344f68069e3
 ARG PIN_TTYD=1.7.7
 ARG PIN_TTYD_SHA256_AMD64=8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
 ARG PIN_TTYD_SHA256_ARM64=b38acadd89d1d396a0f5649aa52c539edbad07f4bc7348b27b4f4b7219dd4165
-ARG PIN_CADDY=2.11.7
-ARG PIN_CADDY_SHA512_AMD64=a7a433a1b133efc3c8d10eb0b99d52a24b5ef5c322dc77f5282182b1c0402139ab83f3a99f0c52409df77d20123fb0b523edad8a66d8f5e49136197bf61ef0e7
-ARG PIN_CADDY_SHA512_ARM64=3db36ba90c7a6e8dda40ee3dd71fa08844c76b5fb08f61b31e5e78d2ed38e71c51dc7baed875e50d1ca1279196e84302967237386ae87c91ae9f2aaceada682e
+ARG PIN_CADDY=2.11.9
+ARG PIN_CADDY_SHA512_AMD64=0e85544340290a16ce4bfb76fe7d65e9de1bf3a6e67f5ccfff30b30d27ea4c73e078077b7bf3e58ae60b6b12e44327705287059c775bca5782e8ee85ea7edd75
+ARG PIN_CADDY_SHA512_ARM64=9e5e76d7888542924de2c25353ae87c5f77e2a22c5b1198633cae13688922282e05383d142599205c88d8d80eee5e967d291214d7abce4835329a191b20dd6e0
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
@@ -51,7 +55,7 @@ RUN apt-get update \
       tmux git git-lfs build-essential pkg-config \
       python3 python3-dev python3-pip python3-venv python-is-python3 pipx \
       jq ripgrep fd-find unzip zip xz-utils bzip2 zstd less tree file rsync \
-      htop nano vim procps psmisc lsof iproute2 iputils-ping dnsutils netcat-openbsd \
+      htop nano vim procps psmisc lsof iproute2 iputils-ping bind9-dnsutils netcat-openbsd \
       bash-completion ncurses-term bubblewrap socat sqlite3 \
  && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
  && rm -rf /var/lib/apt/lists/*
@@ -77,7 +81,6 @@ RUN case "$(dpkg --print-architecture)" in \
  && rm -f /tmp/node.tar.xz /usr/local/CHANGELOG.md /usr/local/README.md \
  && install -d /usr/local/share/doc/nodejs \
  && mv /usr/local/LICENSE /usr/local/share/doc/nodejs/LICENSE \
- && corepack enable \
  && node --version && npm --version
 
 # GitHub CLI and Claude Code from their vendors' release downloads, checksum-verified.
@@ -101,11 +104,11 @@ RUN case "$(dpkg --print-architecture)" in \
  && chmod 0755 /usr/local/bin/claude \
  && gh --version && claude --version
 
-# ttyd (web terminal) and Caddy (HTTP front on $PORT): static release binaries,
-# checksum-verified.
+# ttyd (web terminal), Caddy (HTTP front on $PORT) and uv: static release
+# binaries, checksum-verified.
 RUN case "$(dpkg --print-architecture)" in \
-      amd64) ttyd_arch=x86_64;  ttyd_sha="${PIN_TTYD_SHA256_AMD64}"; caddy_arch=amd64; caddy_sha="${PIN_CADDY_SHA512_AMD64}" ;; \
-      arm64) ttyd_arch=aarch64; ttyd_sha="${PIN_TTYD_SHA256_ARM64}"; caddy_arch=arm64; caddy_sha="${PIN_CADDY_SHA512_ARM64}" ;; \
+      amd64) ttyd_arch=x86_64;  ttyd_sha="${PIN_TTYD_SHA256_AMD64}"; caddy_arch=amd64; caddy_sha="${PIN_CADDY_SHA512_AMD64}"; uv_arch=x86_64;  uv_sha="${PIN_UV_SHA256_AMD64}" ;; \
+      arm64) ttyd_arch=aarch64; ttyd_sha="${PIN_TTYD_SHA256_ARM64}"; caddy_arch=arm64; caddy_sha="${PIN_CADDY_SHA512_ARM64}"; uv_arch=aarch64; uv_sha="${PIN_UV_SHA256_ARM64}" ;; \
       *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac \
  && curl -fsSL --retry 5 --retry-all-errors -o /usr/local/bin/ttyd "https://github.com/tsl0922/ttyd/releases/download/${PIN_TTYD}/ttyd.${ttyd_arch}" \
@@ -117,22 +120,26 @@ RUN case "$(dpkg --print-architecture)" in \
  && tar -xzf /tmp/caddy.tar.gz -C /usr/local/bin --no-same-owner caddy \
  && tar -xzf /tmp/caddy.tar.gz -C /usr/local/share/doc/caddy --no-same-owner LICENSE \
  && rm -f /tmp/caddy.tar.gz \
- && ttyd --version && caddy version
-
-# uv via Astral's official installer, pinned to a release.
-RUN curl -fsSL --retry 5 --retry-all-errors "https://astral.sh/uv/${PIN_UV}/install.sh" \
-      | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh \
- && uv --version && uvx --version
+ && curl -fsSL --retry 5 --retry-all-errors -o /tmp/uv.tar.gz "https://github.com/astral-sh/uv/releases/download/${PIN_UV}/uv-${uv_arch}-unknown-linux-gnu.tar.gz" \
+ && echo "${uv_sha}  /tmp/uv.tar.gz" | sha256sum -c - \
+ && tar -xzf /tmp/uv.tar.gz -C /tmp --no-same-owner \
+ && install -m 0755 "/tmp/uv-${uv_arch}-unknown-linux-gnu/uv" "/tmp/uv-${uv_arch}-unknown-linux-gnu/uvx" /usr/local/bin/ \
+ && rm -rf /tmp/uv.tar.gz "/tmp/uv-${uv_arch}-unknown-linux-gnu" \
+ && ttyd --version && caddy version && uv --version && uvx --version
 
 # OpenAI Codex CLI, Gemini CLI and OpenCode from their official npm packages,
 # installed system-wide so the /home volume never hides them. Per-user
 # upgrades go to ~/.npm-global (on the volume), which comes first in PATH.
+# corepack (yarn/pnpm shims) left the Node.js tarball with Node 25; it comes
+# from npm now.
 RUN npm install -g --no-fund --no-audit \
+      "corepack@${PIN_COREPACK}" \
       "@openai/codex@${PIN_CODEX}" \
       "@google/gemini-cli@${PIN_GEMINI_CLI}" \
       "opencode-ai@${PIN_OPENCODE}" \
  && npm cache clean --force \
- && codex --version && gemini --version && opencode --version
+ && corepack enable \
+ && codex --version && gemini --version && opencode --version && corepack --version
 
 # Dev box wiring: entrypoint, renderers, shell profile, tmux defaults.
 COPY rootfs/ /

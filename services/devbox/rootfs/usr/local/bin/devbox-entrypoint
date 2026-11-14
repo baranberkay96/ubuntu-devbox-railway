@@ -3,13 +3,19 @@
 #
 # Runs as root under tini (Railway's own init is PID 1, so nothing here relies
 # on being PID 1):
-#   1. validates inputs and prepares the persistent home on the /home volume,
+#   1. checks inputs and prepares the persistent home on the /home volume,
 #   2. exposes selected API keys and git settings to login shells,
 #   3. generates SSH host keys once (kept on the volume), configures auth and
 #      starts sshd under a restart loop,
 #   4. optionally starts the ttyd web terminal (loopback only) under a restart loop,
 #   5. renders the status page and execs Caddy on $PORT: public /healthz,
 #      everything else behind HTTP basic auth.
+#
+# No value typed into Railway's deploy form may stop the container (a failed
+# deploy lowers the template's health score): invalid values fall back to the
+# default with a warning in the deploy logs. Unusable passwords fail closed
+# instead: SSH password login is turned off, and the web login is locked with
+# a random password nobody knows, until a valid value is set.
 set -Eeuo pipefail
 
 readonly DEV_USER="dev"
@@ -17,16 +23,22 @@ readonly DEV_HOME="/home/${DEV_USER}"
 readonly STATE_DIR="/home/.devbox"            # root-only state on the volume
 readonly HOSTKEY_DIR="${STATE_DIR}/ssh"
 readonly INIT_MARKER="${DEV_HOME}/.devbox-initialized"
+readonly OS_MARKER="${STATE_DIR}/os-version-id"       # Ubuntu release the volume last ran on
+readonly UPGRADE_NOTE="${DEV_HOME}/.config/devbox/upgrade-notice.txt"
 readonly RUN_DIR="/run/devbox"
 readonly LIB_DIR="/usr/local/lib/devbox"
 readonly ENV_FILE="/etc/devbox/env.sh"
 readonly AUTHORIZED_KEYS_FILE="/etc/ssh/authorized_keys.d/${DEV_USER}"
 readonly TTYD_PORT="7681"
 readonly MIN_SECRET_LENGTH=12
+readonly MAX_WEB_PASSWORD_BYTES=72              # bcrypt's input limit (caddy hash-password)
 readonly SECRET_VARS=(SSH_PASSWORD WEB_PASSWORD)
+readonly DEFAULT_HTTP_PORT=8080
+readonly DEFAULT_SSH_PORT=22
 
-SSH_PORT="${SSH_PORT:-22}"
-HTTP_PORT="${PORT:-8080}"
+SSH_PORT="${SSH_PORT:-${DEFAULT_SSH_PORT}}"
+HTTP_PORT="${PORT:-${DEFAULT_HTTP_PORT}}"
+WEB_LOGIN_LOCKED="false"
 WORKSPACE_DIR="${DEV_HOME}/workspace"
 PASSWORD_AUTH="no"
 WEB_TERMINAL_ENABLED="false"
@@ -55,6 +67,13 @@ is_true() {
   esac
 }
 
+is_false() {
+  case "${1:-}" in
+    0|false|FALSE|False|no|NO|No|off|OFF|Off) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 as_dev() {
   setpriv --reuid="${DEV_USER}" --regid="${DEV_USER}" --init-groups \
     env HOME="${DEV_HOME}" USER="${DEV_USER}" LOGNAME="${DEV_USER}" "$@"
@@ -67,42 +86,95 @@ supervise() {
   "${LIB_DIR}/supervise" "${name}" "$@" &
 }
 
-validate_port() {
-  local name="$1" value="$2"
-  case "${value}" in
-    ''|*[!0-9]*) die "${name} must be a number (got '${value}')" ;;
+is_valid_port() {
+  case "$1" in
+    ''|*[!0-9]*|0*) return 1 ;;
   esac
-  if [ "${value}" -lt 1 ] || [ "${value}" -gt 65535 ]; then
-    die "${name} must be between 1 and 65535 (got ${value})"
+  [ "${#1}" -le 5 ] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
+
+# Prints the reason a password is unusable, or nothing when it is fine.
+secret_problem() {
+  local value="$1" max_bytes="${2:-0}"
+  case "${value}" in
+    *$'\n'*|*$'\r'*) echo "contains a line break"; return 0 ;;
+  esac
+  if [ "${#value}" -lt "${MIN_SECRET_LENGTH}" ]; then
+    echo "is shorter than ${MIN_SECRET_LENGTH} characters"
+  elif [ "${max_bytes}" -gt 0 ] && [ "$(printf '%s' "${value}" | wc -c)" -gt "${max_bytes}" ]; then
+    echo "is longer than ${max_bytes} bytes"
   fi
 }
 
-validate_secret() {
-  local name="$1" value="$2"
-  if [ "${#value}" -lt "${MIN_SECRET_LENGTH}" ]; then
-    die "${name} must be at least ${MIN_SECRET_LENGTH} characters"
+# Railway's variable editor keeps a pasted trailing newline or carriage return.
+trim_line_end() {
+  local value="$1"
+  while :; do
+    case "${value}" in
+      *$'\n'|*$'\r') value="${value%?}" ;;
+      *) break ;;
+    esac
+  done
+  printf '%s' "${value}"
+}
+
+# 64 hex characters (256 bits), within bcrypt's limit. Never logged.
+random_secret() {
+  od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
+}
+
+check_ports() {
+  if ! is_valid_port "${HTTP_PORT}"; then
+    warn "PORT '${HTTP_PORT}' is not a port number (1-65535); using ${DEFAULT_HTTP_PORT}"
+    HTTP_PORT="${DEFAULT_HTTP_PORT}"
   fi
-  case "${value}" in
-    *$'\n'*|*$'\r'*) die "${name} must not contain line breaks" ;;
-  esac
+  if ! is_valid_port "${SSH_PORT}"; then
+    warn "SSH_PORT '${SSH_PORT}' is not a port number (1-65535); using ${DEFAULT_SSH_PORT}"
+    SSH_PORT="${DEFAULT_SSH_PORT}"
+  fi
+  if [ "${HTTP_PORT}" = "${SSH_PORT}" ] || [ "${HTTP_PORT}" = "${TTYD_PORT}" ]; then
+    warn "PORT ${HTTP_PORT} collides with SSH (${SSH_PORT}) or the internal web terminal (${TTYD_PORT}); using ${DEFAULT_HTTP_PORT}"
+    HTTP_PORT="${DEFAULT_HTTP_PORT}"
+  fi
+  if [ "${SSH_PORT}" = "${HTTP_PORT}" ] || [ "${SSH_PORT}" = "${TTYD_PORT}" ]; then
+    warn "SSH_PORT ${SSH_PORT} collides with PORT (${HTTP_PORT}) or the internal web terminal (${TTYD_PORT}); using ${DEFAULT_SSH_PORT}"
+    SSH_PORT="${DEFAULT_SSH_PORT}"
+  fi
+}
+
+check_passwords() {
+  local problem
+  SSH_PASSWORD="$(trim_line_end "${SSH_PASSWORD:-}")"
+  WEB_PASSWORD="$(trim_line_end "${WEB_PASSWORD:-}")"
+
+  if [ -n "${SSH_PASSWORD}" ]; then
+    problem="$(secret_problem "${SSH_PASSWORD}")"
+    if [ -n "${problem}" ]; then
+      warn "SSH_PASSWORD ${problem}: SSH password login is OFF until you set a password with at least ${MIN_SECRET_LENGTH} characters and redeploy. SSH keys and the web terminal still work."
+      SSH_PASSWORD=""
+    fi
+  fi
+
+  if [ -z "${WEB_PASSWORD}" ]; then
+    problem="is empty"
+  else
+    problem="$(secret_problem "${WEB_PASSWORD}" "${MAX_WEB_PASSWORD_BYTES}")"
+  fi
+  if [ -n "${problem}" ]; then
+    warn "WEB_PASSWORD ${problem}: the status page and web terminal are LOCKED with a random password nobody knows. Set WEB_PASSWORD to ${MIN_SECRET_LENGTH}-${MAX_WEB_PASSWORD_BYTES} characters in the service's Variables tab and redeploy. SSH is not affected."
+    WEB_PASSWORD="$(random_secret)"
+    WEB_LOGIN_LOCKED="true"
+  fi
 }
 
 validate_inputs() {
   [ "$(id -u)" -eq 0 ] || die "the entrypoint must start as root; it drops privileges itself"
-  validate_port PORT "${HTTP_PORT}"
-  validate_port SSH_PORT "${SSH_PORT}"
-  if [ "${HTTP_PORT}" = "${SSH_PORT}" ] || [ "${HTTP_PORT}" = "${TTYD_PORT}" ] || [ "${SSH_PORT}" = "${TTYD_PORT}" ]; then
-    die "PORT (${HTTP_PORT}), SSH_PORT (${SSH_PORT}) and the internal web terminal port (${TTYD_PORT}) must differ"
-  fi
-  if [ -n "${SSH_PASSWORD:-}" ]; then
-    validate_secret SSH_PASSWORD "${SSH_PASSWORD}"
-  fi
-  if [ -z "${WEB_PASSWORD:-}" ]; then
-    die "WEB_PASSWORD is empty. It protects the status page and the web terminal; set a value with at least ${MIN_SECRET_LENGTH} characters"
-  fi
-  validate_secret WEB_PASSWORD "${WEB_PASSWORD}"
+  check_ports
+  check_passwords
   if is_true "${WEB_TERMINAL:-true}"; then
     WEB_TERMINAL_ENABLED="true"
+  elif [ -n "${WEB_TERMINAL:-}" ] && ! is_false "${WEB_TERMINAL}"; then
+    warn "WEB_TERMINAL '${WEB_TERMINAL}' is neither true nor false; the web terminal stays off"
   fi
   # Keep the login secrets as shell variables only: no child process (sshd,
   # ttyd, git, agents started from shells) inherits them from here on.
@@ -193,7 +265,7 @@ configure_git() {
 clone_repo_once() {
   [ -n "${GIT_REPO:-}" ] || return 0
   local target
-  target="${WORKSPACE_DIR}/$(basename "${GIT_REPO%.git}")"
+  target="${WORKSPACE_DIR}/$(basename -- "${GIT_REPO%.git}" 2>/dev/null || echo repo)"
   [ -e "${target}" ] && return 0
   log "cloning ${GIT_REPO} into ${target} (background)"
   (
@@ -202,6 +274,39 @@ clone_repo_once() {
       && log "clone of ${GIT_REPO} finished" \
       || warn "clone of ${GIT_REPO} failed (check GIT_REPO and GITHUB_TOKEN)"
   ) &
+}
+
+# The volume outlives the image. When the Ubuntu release changes (24.04 images
+# wrote no marker), leave a note for the user: virtualenvs and pipx/uv tools on
+# the volume point at the old Python, native npm addons at the old Node ABI.
+note_os_upgrade() {
+  local current previous=""
+  current="$(. /etc/os-release && printf '%s' "${VERSION_ID:-unknown}")"
+  install -d -m 0700 -o root -g root "${STATE_DIR}"
+  if [ -r "${OS_MARKER}" ]; then
+    previous="$(cat "${OS_MARKER}")"
+  elif [ -f "${HOSTKEY_DIR}/ssh_host_ed25519_key" ]; then
+    previous="24.04"
+  fi
+  if [ -n "${previous}" ] && [ "${previous}" != "${current}" ]; then
+    warn "this volume ran Ubuntu ${previous} before; now Ubuntu ${current}. Your files are unchanged; see ${UPGRADE_NOTE} for tools to reinstall"
+    install -d -m 0755 -o "${DEV_USER}" -g "${DEV_USER}" "$(dirname "${UPGRADE_NOTE}")"
+    cat > "${UPGRADE_NOTE}" <<NOTE
+Ubuntu Dev Box: upgraded from Ubuntu ${previous} to ${current} on $(date -u +%F).
+
+Your files, logins, dotfiles and SSH host keys are unchanged. The system
+Python and Node.js are newer, so things you installed yourself on the volume
+may need a reinstall:
+  pipx reinstall-all                       pipx apps
+  uv tool install --reinstall {tool}       uv tools (list them: uv tool list)
+  python3 -m venv --clear .venv            project virtualenvs (or: uv venv)
+  npm i -g {package}                       global npm packages with native addons
+
+Remove this note: rm ~/.config/devbox/upgrade-notice.txt
+NOTE
+    chown "${DEV_USER}:${DEV_USER}" "${UPGRADE_NOTE}" 2>/dev/null || true
+  fi
+  printf '%s\n' "${current}" > "${OS_MARKER}"
 }
 
 setup_host_keys() {
@@ -234,7 +339,10 @@ setup_ssh_auth() {
 
   local tmp env_keys=0 user_keys=0
   tmp="$(mktemp)"
-  "${LIB_DIR}/render-authorized-keys" > "${tmp}"
+  if ! "${LIB_DIR}/render-authorized-keys" > "${tmp}"; then
+    warn "could not read SSH_AUTHORIZED_KEYS; no keys from it are installed"
+    : > "${tmp}"
+  fi
   env_keys="$(grep -c . "${tmp}" || true)"
   if [ "${env_keys}" -gt 0 ]; then
     install -m 0644 -o root -g root "${tmp}" "${AUTHORIZED_KEYS_FILE}"
@@ -261,7 +369,10 @@ start_sshd() {
   install -m 0644 /etc/ssh/sshd_config.devbox /etc/ssh/sshd_config
   rm -f /etc/ssh/sshd_config.devbox
   install -d -m 0755 /run/sshd
-  /usr/sbin/sshd -t -f /etc/ssh/sshd_config || die "sshd configuration test failed"
+  if ! /usr/sbin/sshd -t -f /etc/ssh/sshd_config; then
+    warn "sshd configuration test failed (see above); SSH is unavailable, the web terminal still works"
+    return 0
+  fi
   log "starting sshd on port ${SSH_PORT}"
   supervise sshd /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config
 }
@@ -364,6 +475,9 @@ exec_caddy() {
   if [ "${WEB_TERMINAL_ENABLED}" = "true" ]; then
     served="status page and /terminal/"
   fi
+  if [ "${WEB_LOGIN_LOCKED}" = "true" ]; then
+    warn "web login is locked (see the WEB_PASSWORD warning above)"
+  fi
   log "serving /healthz (public) plus the ${served} behind basic auth on :${HTTP_PORT} (user ${DEV_USER}, password WEB_PASSWORD)"
   exec setpriv --reuid=www-data --regid=www-data --init-groups "${caddy_env[@]}" \
     /usr/local/bin/caddy run --config "${RUN_DIR}/Caddyfile" --adapter caddyfile
@@ -374,6 +488,7 @@ main() {
   check_runtime
   configure_timezone
   prepare_home
+  note_os_upgrade || warn "could not check the previous Ubuntu release"
   write_env_file
   configure_git
   setup_host_keys
