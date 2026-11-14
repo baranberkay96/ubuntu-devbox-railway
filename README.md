@@ -66,7 +66,7 @@ A remote dev box earns its keep when it stays online: agents keep working in tmu
 
 **Upgrading from the Ubuntu 24.04 version**: redeploy the service. Files, logins, passwords and SSH host keys stay. Python moves from 3.12 to 3.14 and Node.js from 24 to 26, so the first start writes `~/.config/devbox/upgrade-notice.txt` with the reinstall commands for pipx apps, uv tools, project virtualenvs and native npm packages.
 
-**Resources**: idle (nobody connected) the box uses about {idle-ram} of RAM. It boots on every plan, including Trial's 1 GB per service, but AI agents and builds need more: Hobby or Pro for real work.
+**Resources**: idle (nobody connected) the box uses about 130 MB of RAM, so it boots on every plan, including Trial (1 GB per service). One agent session fits in 1 GB; builds and parallel agents need more, so Hobby or Pro is the plan for real work.
 
 **Scaling**: this is a single-user machine, so keep one replica. Raise CPU and RAM in the service settings when builds or parallel agents need more. For a team, deploy one box per person.
 

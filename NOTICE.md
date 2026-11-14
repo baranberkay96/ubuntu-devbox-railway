@@ -1,25 +1,36 @@
-# NOTICE: Ubuntu 24.04 Cloud Dev Box template
+# NOTICE: Ubuntu 26.04 SSH + Claude Code Dev Box template
 
 ## Software installed in the image
 
 | Component | Source | License | How it is used |
 |---|---|---|---|
-| Ubuntu 24.04 LTS | `ubuntu:noble-20260930.1@sha256:68ee2200…` (Docker Hub official image) | various (Ubuntu archive packages) | Base OS; apt packages installed unmodified |
-| OpenSSH 9.6p1 | Ubuntu `openssh-server` | BSD-style | sshd, configured by our own generated `sshd_config` |
+| Ubuntu 26.04 LTS | `ubuntu:resolute-20261105.1@sha256:66b8084a…` (Docker Hub official image) | various (Ubuntu archive packages) | Base OS; apt packages installed unmodified |
+| OpenSSH 10.2p1 | Ubuntu `openssh-server` | BSD-style | sshd, configured by our own generated `sshd_config` |
 | tmux, git, build-essential, ripgrep, jq, Python 3, pipx, tini and other tools | Ubuntu archive | various (GPL, ISC, MIT, BSD, PSF, ...) | Installed unmodified |
-| Node.js 24.22.0 LTS | https://nodejs.org/dist/ official tarball (SHA-256 checked) | MIT (plus bundled dependency licenses, kept in `/usr/local/share/doc/nodejs/LICENSE`) | Runtime for the npm-based CLIs |
+| Node.js 26.13.1 LTS | https://nodejs.org/dist/ official tarball (SHA-256 checked) | MIT (plus bundled dependency licenses, kept in `/usr/local/share/doc/nodejs/LICENSE`) | Runtime for the npm-based CLIs |
+| corepack 0.36.0 | npm `corepack`, https://github.com/nodejs/corepack | MIT | yarn/pnpm shims (no longer bundled with Node.js since 25) |
 | Claude Code 2.1.311 | Anthropic's native release download `downloads.claude.ai/claude-code-releases` (SHA-256 checked) | Proprietary, Anthropic Commercial Terms of Service | Installed unmodified; use is subject to Anthropic's terms |
-| OpenAI Codex CLI 0.163.0 | npm `@openai/codex`, https://github.com/openai/codex | Apache-2.0 | Installed unmodified |
-| Gemini CLI 0.64.0 | npm `@google/gemini-cli`, https://github.com/google-gemini/gemini-cli | Apache-2.0 | Installed unmodified |
-| OpenCode 1.19.3 | npm `opencode-ai`, https://github.com/anomalyco/opencode | MIT | Installed unmodified |
-| uv 0.13.1 | Astral installer `astral.sh/uv/0.13.1/install.sh`, https://github.com/astral-sh/uv | MIT or Apache-2.0 | Installed unmodified |
-| GitHub CLI 2.103.3 | GitHub release tarball, https://github.com/cli/cli | MIT | Installed unmodified |
+| OpenAI Codex CLI 0.169.0 | npm `@openai/codex`, https://github.com/openai/codex | Apache-2.0 | Installed unmodified |
+| Gemini CLI 0.68.0 | npm `@google/gemini-cli`, https://github.com/google-gemini/gemini-cli | Apache-2.0 | Installed unmodified |
+| OpenCode 1.19.5 | npm `opencode-ai`, https://github.com/anomalyco/opencode | MIT | Installed unmodified |
+| uv 0.13.8 | GitHub release tarball (SHA-256 checked), https://github.com/astral-sh/uv | MIT or Apache-2.0 | Installed unmodified |
+| GitHub CLI 2.104.0 | GitHub release tarball (SHA-256 checked), https://github.com/cli/cli | MIT | Installed unmodified |
 | ttyd 1.7.7 | GitHub release binary (SHA-256 checked), https://github.com/tsl0922/ttyd | MIT, Copyright (c) 2016-2022 Shuanglei Tao | Web terminal, unmodified binary |
-| Caddy 2.11.7 | GitHub release tarball (SHA-512 checked), https://github.com/caddyserver/caddy | Apache-2.0 (license kept in `/usr/local/share/doc/caddy/LICENSE`) | HTTP front with basic auth, unmodified binary |
+| Caddy 2.11.9 | GitHub release tarball (SHA-512 checked), https://github.com/caddyserver/caddy | Apache-2.0 (license kept in `/usr/local/share/doc/caddy/LICENSE`) | HTTP front with basic auth, unmodified binary |
 
 Product names belong to their owners. This is a community template, not affiliated with Canonical, Anthropic, OpenAI, Google, the OpenCode project or Railway. Users supply their own accounts and keys and are bound by each vendor's terms.
 
-## Upstream sources and docs checked (2026-10-20)
+## Upstream sources checked for the Ubuntu 26.04 upgrade (2026-11-14)
+
+- Docker Hub `library/ubuntu`: `resolute-20261105.1` = index digest `sha256:66b8084a0d45bd4877992bd38e04b51bfa99bd57293364cb6391fb674771846e`; its amd64/arm64 images are the same as the `26.04`/`resolute` tags (amd64 `sha256:0d5255be…`, arm64 `sha256:7e795746…`), checked against registry-1.docker.io
+- Ubuntu resolute, resolute-updates and resolute-security package indexes (main, universe, amd64): every apt package in the Dockerfile exists; `dnsutils` is gone and replaced by `bind9-dnsutils`; `openssh-server` 1:10.2p1-2ubuntu3.8, `sudo` 1.9.17p2 (classic sudo; `sudo-rs` is a separate package), Python 3.14.3
+- Node.js release index: 26.13.1 is the current LTS ("Lithium", LTS since 2026-10-28); `SHASUMS256.txt` for the linux-x64/arm64 tarballs; the 26.x tarball no longer contains corepack
+- Claude Code: `downloads.claude.ai/claude-code-releases/stable` = 2.1.311 (unchanged); checksums from that release's `manifest.json`
+- npm: `@openai/codex` latest 0.169.0, `@google/gemini-cli` latest 0.68.0 (engines node >= 20), `opencode-ai` latest 1.19.5, `corepack` latest 0.36.0 (engines include node >= 26)
+- GitHub releases with published checksums: gh v2.104.0 (`gh_2.104.0_checksums.txt`), uv 0.13.8 (`.sha256` per archive), ttyd 1.7.7 (`SHA256SUMS`, still the latest release), Caddy v2.11.9 (`caddy_2.11.9_checksums.txt`, SHA-512). The amd64 artifacts were also downloaded and hashed locally; the hashes matched.
+- OpenSSH 9.8+ penalises source addresses after failed logins (`PerSourcePenalties`); behind Railway's TCP proxy every client shares one address, so it is turned off.
+
+## Upstream sources and docs checked (2026-10-20, original release)
 
 - Docker Hub `library/ubuntu` tags: `noble-20260930.1` = `24.04` = digest `sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac`
 - Ubuntu noble, noble-updates and noble-security package indexes (main, universe): every apt package in the Dockerfile exists; `openssh-server` 1:9.6p1-3ubuntu13.19/20
