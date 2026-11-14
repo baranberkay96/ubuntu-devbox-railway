@@ -6,7 +6,10 @@ set -u
 v() {
   name="$1"
   shift
-  out="$("$@" 2>&1 | head -n 1 | tr -d '\r')"
+  # stdout first: some CLIs print warnings on stderr (Codex: "failed to clean
+  # up stale arg0 temp dirs"); ssh -V prints its version only on stderr.
+  out="$("$@" 2>/dev/null | head -n 1 | tr -d '\r')"
+  [ -n "${out}" ] || out="$("$@" 2>&1 | head -n 1 | tr -d '\r')"
   [ -n "${out}" ] || out="unavailable"
   printf '%s|%s\n' "${name}" "${out}"
 }
@@ -18,6 +21,7 @@ v "Gemini CLI" gemini --version
 v "OpenCode" opencode --version
 v "Node.js" node --version
 v "npm" npm --version
+v "corepack" corepack --version
 v "Python" python3 --version
 v "uv" uv --version
 v "pipx" pipx --version
