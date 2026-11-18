@@ -1,11 +1,11 @@
-# Ubuntu 26.04 SSH + Claude Code Dev Box: Railway template spec
+# Ubuntu 26.04 SSH + Claude Code + Codex: Railway template spec
 
 ## Listing
 
 | Field | Value |
 |---|---|
-| Name | **Ubuntu 26.04 SSH + Claude Code Dev Box** (38 chars; renamed 2026-11-14 from "Ubuntu 24.04 Cloud Dev Box (SSH + Claude Code)") |
-| Description | SSH + Claude Code in one click, no setup: web terminal, persistent disk. (72 chars) |
+| Name | **Ubuntu 26.04 SSH + Claude Code + Codex** (38 chars; renamed 2026-11-18 from "Ubuntu 26.04 SSH + Claude Code Dev Box", 2026-11-14 from "Ubuntu 24.04 Cloud Dev Box (SSH + Claude Code)") |
+| Description | SSH + Claude Code + Codex in one click: web terminal, persistent disk. (70 chars; Codex named because the leader only ships Claude Code) |
 | Category | Other |
 | Tags | ubuntu, ssh, claude-code, web-terminal, devbox, tmux, codex, gemini-cli, opencode, ai-coding (the first five are sent to Railway) |
 | Icon | `https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/ubuntu-linux.svg` (200, image/svg+xml) |

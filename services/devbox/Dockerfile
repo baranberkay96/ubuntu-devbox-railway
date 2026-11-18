@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# Ubuntu 26.04 SSH + Claude Code Dev Box for Railway.
+# Ubuntu 26.04 SSH + Claude Code + Codex for Railway.
 #   - OpenSSH server for the Railway TCP proxy (user "dev", passwordless sudo,
 #     no root login, host keys persisted on the volume)
 #   - tmux, build tools, Node.js LTS (with corepack), Python 3, uv

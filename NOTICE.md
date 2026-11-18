@@ -1,4 +1,4 @@
-# NOTICE: Ubuntu 26.04 SSH + Claude Code Dev Box template
+# NOTICE: Ubuntu 26.04 SSH + Claude Code + Codex template
 
 ## Software installed in the image
 

@@ -1,7 +1,7 @@
 {
-  "name": "Ubuntu 26.04 SSH + Claude Code Dev Box",
+  "name": "Ubuntu 26.04 SSH + Claude Code + Codex",
   "idSeed": "Ubuntu 24.04 Cloud Dev Box (SSH + Claude Code) / 2026-11-07",
-  "description": "SSH + Claude Code in one click, no setup: web terminal, persistent disk.",
+  "description": "SSH + Claude Code + Codex in one click: web terminal, persistent disk.",
   "category": "Other",
   "tags": [
     "ubuntu",

@@ -1,5 +1,5 @@
 
-  Ubuntu 26.04 SSH + Claude Code Dev Box
+  Ubuntu 26.04 SSH + Claude Code + Codex
   --------------------------------------
   Start here:  claude      (log in with your Claude account, or set ANTHROPIC_API_KEY)
 
