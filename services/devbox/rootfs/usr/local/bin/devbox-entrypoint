@@ -93,6 +93,15 @@ is_valid_port() {
   [ "${#1}" -le 5 ] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
 }
 
+# Render decimal input canonically before validation and collision checks.
+# Railway treats PORT=09090 as port 9090, so rejecting the leading zero would
+# put Caddy on a different port from the platform's healthcheck.
+normalize_port() {
+  local value="$1"
+  value="${value#"${value%%[!0]*}"}"
+  printf '%s' "${value:-0}"
+}
+
 # Prints the reason a password is unusable, or nothing when it is fine.
 secret_problem() {
   local value="$1" max_bytes="${2:-0}"
@@ -124,6 +133,8 @@ random_secret() {
 }
 
 check_ports() {
+  HTTP_PORT="$(normalize_port "${HTTP_PORT}")"
+  SSH_PORT="$(normalize_port "${SSH_PORT}")"
   if ! is_valid_port "${HTTP_PORT}"; then
     warn "PORT '${HTTP_PORT}' is not a port number (1-65535); using ${DEFAULT_HTTP_PORT}"
     HTTP_PORT="${DEFAULT_HTTP_PORT}"
@@ -139,6 +150,11 @@ check_ports() {
   if [ "${SSH_PORT}" = "${HTTP_PORT}" ] || [ "${SSH_PORT}" = "${TTYD_PORT}" ]; then
     warn "SSH_PORT ${SSH_PORT} collides with PORT (${HTTP_PORT}) or the internal web terminal (${TTYD_PORT}); using ${DEFAULT_SSH_PORT}"
     SSH_PORT="${DEFAULT_SSH_PORT}"
+  fi
+  # An SSH fallback can itself collide (PORT=22, SSH_PORT=7681).
+  if [ "${HTTP_PORT}" = "${SSH_PORT}" ]; then
+    warn "PORT ${HTTP_PORT} collides with the fallback SSH port; using ${DEFAULT_HTTP_PORT}"
+    HTTP_PORT="${DEFAULT_HTTP_PORT}"
   fi
 }
 
